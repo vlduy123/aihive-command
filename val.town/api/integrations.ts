@@ -231,6 +231,11 @@ async function handleGA4(
       method = "POST";
       body = await req.text();
       break;
+    case "funnel":
+      url = `https://analyticsdata.googleapis.com/v1alpha/properties/${propertyId}:runFunnelReport`;
+      method = "POST";
+      body = await req.text();
+      break;
     default:
       url = `${base}/${propertyId}/${endpoint}`;
   }

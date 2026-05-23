@@ -72,7 +72,6 @@ export function getFrontendHTML(): string {
       Cpu, Activity, Database, Bell
     } from 'lucide-react';
 
-    // ─── Helpers ────────────────────────────────────────────────────────────────
 
     const parseTools = (tools) => {
       if (Array.isArray(tools)) return tools;
@@ -82,34 +81,18 @@ export function getFrontendHTML(): string {
       return [];
     };
 
-    // ─── Constants ──────────────────────────────────────────────────────────────
-
-    const COLORS = {
-      bg: '#0a0a0f',
-      surface: '#13131a',
-      surfaceHover: '#16161f',
-      border: '#1e1e2e',
-      primary: '#6366f1',
-      primaryHover: '#4f46e5',
-      success: '#10b981',
-      warning: '#f59e0b',
-      error: '#ef4444',
-      textPrimary: '#e2e8f0',
-      textMuted: '#64748b',
-      textSubtle: '#94a3b8',
-    };
 
     const INTEGRATIONS = ['ahrefs', 'ga4', 'gsc', 'linkedin', 'outlook', 'wordpress', 'youtube', 'producthunt'];
 
     const INTEGRATION_META = {
-      ahrefs:      { emoji: '📊', label: 'Ahrefs',        category: 'marketing', color: '#f59e0b' },
-      ga4:         { emoji: '📈', label: 'Google Analytics 4', category: 'marketing', color: '#10b981' },
-      gsc:         { emoji: '🔍', label: 'Google Search Console', category: 'marketing', color: '#3b82f6' },
-      linkedin:    { emoji: '💼', label: 'LinkedIn',       category: 'sales',     color: '#0077b5' },
-      outlook:     { emoji: '📧', label: 'Outlook',        category: 'sales',     color: '#0078d4' },
-      wordpress:   { emoji: '🌐', label: 'WordPress',      category: 'marketing', color: '#21759b' },
-      youtube:     { emoji: '▶️', label: 'YouTube',        category: 'marketing', color: '#ef4444' },
-      producthunt: { emoji: '🚀', label: 'Product Hunt',   category: 'marketing', color: '#da552f' },
+      ahrefs:      { icon: 'ahrefs',             label: 'Ahrefs',                category: 'marketing', color: '#f59e0b' },
+      ga4:         { icon: 'googleanalytics',     label: 'Google Analytics 4',    category: 'marketing', color: '#e37400' },
+      gsc:         { icon: 'googlesearchconsole', label: 'Google Search Console', category: 'marketing', color: '#4285f4' },
+      linkedin:    { icon: 'linkedin',            label: 'LinkedIn',              category: 'sales',     color: '#0077b5' },
+      outlook:     { icon: 'microsoftoutlook',    label: 'Outlook',               category: 'sales',     color: '#0078d4' },
+      wordpress:   { icon: 'wordpress',           label: 'WordPress',             category: 'marketing', color: '#21759b' },
+      youtube:     { icon: 'youtube',             label: 'YouTube',               category: 'marketing', color: '#ff0000' },
+      producthunt: { icon: 'producthunt',         label: 'Product Hunt',          category: 'marketing', color: '#da552f' },
     };
 
     const INTEGRATION_ACTIONS = {
@@ -136,7 +119,6 @@ export function getFrontendHTML(): string {
 
     const ALL_TOOLS = ['ahrefs', 'ga4', 'gsc', 'linkedin', 'outlook', 'wordpress', 'youtube', 'producthunt'];
 
-    // ─── Utility Hooks ───────────────────────────────────────────────────────────
 
     function useToast() {
       const [toasts, setToasts] = useState([]);
@@ -148,7 +130,6 @@ export function getFrontendHTML(): string {
       return { toasts, show };
     }
 
-    // ─── Toast Container ─────────────────────────────────────────────────────────
 
     function ToastContainer({ toasts }) {
       return React.createElement('div', {
@@ -176,7 +157,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── Shared UI primitives ─────────────────────────────────────────────────────
 
     function Btn({ children, onClick, variant = 'primary', size = 'md', disabled = false, style = {}, className = '' }) {
       const baseStyle = {
@@ -261,6 +241,15 @@ export function getFrontendHTML(): string {
       });
     }
 
+    function BrandIcon({slug,color='#6366f1',size=18,bare=false}){
+      const [err,setErr]=useState(false);
+      const img=React.createElement('img',{src:'https://cdn.jsdelivr.net/npm/simple-icons@latest/icons/'+slug+'.svg',width:size,height:size,alt:slug,style:{filter:'invert(1)',opacity:0.9,display:'block'},onError:()=>setErr(true)});
+      const fb=React.createElement('span',{style:{fontSize:size*0.65,fontWeight:700,color}},slug[0]);
+      const c=err?fb:img;
+      if(bare)return c;
+      return React.createElement('div',{style:{width:size+14,height:size+14,borderRadius:10,flexShrink:0,background:color+'22',display:'flex',alignItems:'center',justifyContent:'center'}},c);
+    }
+
     function Badge({ label, variant = 'default' }) {
       const styles = {
         default: { background: 'rgba(99,102,241,0.15)', color: '#6366f1' },
@@ -297,71 +286,15 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── Data Formatter ───────────────────────────────────────────────────────────
 
-    function DataDisplay({ data, loading, error }) {
-      if (loading) return React.createElement('div', { style: { display: 'flex', justifyContent: 'center', padding: 32 } }, React.createElement(Spinner));
-      if (error) return React.createElement('div', {
-        style: { padding: 16, borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444', fontSize: 13 }
-      }, React.createElement(AlertCircle, { size: 14, style: { display: 'inline', marginRight: 6 } }), error);
-      if (!data) return null;
-
-      const renderValue = (val, key) => {
-        if (val === null || val === undefined) return React.createElement('span', { style: { color: '#64748b' } }, 'null');
-        if (typeof val === 'boolean') return React.createElement(Badge, { label: String(val), variant: val ? 'success' : 'muted' });
-        if (typeof val === 'number') return React.createElement('span', { style: { color: '#f59e0b', fontFamily: 'monospace' } }, val.toLocaleString());
-        if (typeof val === 'string' && val.startsWith('http')) {
-          return React.createElement('a', { href: val, target: '_blank', style: { color: '#6366f1', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 } },
-            val.length > 50 ? val.slice(0, 50) + '...' : val,
-            React.createElement(ExternalLink, { size: 11 })
-          );
-        }
-        if (typeof val === 'string') return React.createElement('span', null, val.length > 80 ? val.slice(0, 80) + '...' : val);
-        if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'object') {
-          const cols = Object.keys(val[0]).slice(0, 6);
-          return React.createElement('div', { style: { overflowX: 'auto' } },
-            React.createElement('table', null,
-              React.createElement('thead', null,
-                React.createElement('tr', null, cols.map(c => React.createElement('th', { key: c }, c)))
-              ),
-              React.createElement('tbody', null,
-                val.slice(0, 20).map((row, i) =>
-                  React.createElement('tr', { key: i },
-                    cols.map(c => React.createElement('td', { key: c }, renderValue(row[c], c)))
-                  )
-                )
-              )
-            ),
-            val.length > 20 && React.createElement('div', { style: { color: '#64748b', fontSize: 12, padding: '8px 12px' } }, \`+ \${val.length - 20} more rows\`)
-          );
-        }
-        if (Array.isArray(val)) return React.createElement('span', { style: { color: '#94a3b8' } }, val.slice(0, 5).join(', ') + (val.length > 5 ? \` +\${val.length - 5}\` : ''));
-        if (typeof val === 'object') return renderObject(val);
-        return React.createElement('span', null, String(val));
-      };
-
-      const renderObject = (obj) => {
-        const keys = Object.keys(obj).slice(0, 20);
-        return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
-          keys.map(k => {
-            const v = obj[k];
-            const isComplex = (typeof v === 'object' && v !== null) || Array.isArray(v);
-            return React.createElement('div', { key: k },
-              React.createElement('div', { style: { fontSize: 11, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 } }, k.replace(/_/g, ' ')),
-              isComplex
-                ? React.createElement('div', { style: { background: '#0a0a0f', borderRadius: 8, padding: 12, border: '1px solid #1e1e2e' } }, renderValue(v, k))
-                : React.createElement('div', null, renderValue(v, k))
-            );
-          })
-        );
-      };
-
-      return React.createElement('div', {
-        style: { background: '#0d0d14', borderRadius: 10, padding: 16, border: '1px solid #1e1e2e', marginTop: 16 }
-      }, renderObject(typeof data === 'object' && !Array.isArray(data) ? data : { data }));
+    function DataDisplay({data,loading,error}){
+      if(loading)return React.createElement('div',{style:{display:'flex',justifyContent:'center',padding:32}},React.createElement(Spinner));
+      if(error)return React.createElement('div',{style:{padding:16,borderRadius:8,background:'rgba(239,68,68,0.1)',border:'1px solid rgba(239,68,68,0.3)',color:'#ef4444',fontSize:13}},React.createElement(AlertCircle,{size:14,style:{display:'inline',marginRight:6}}),error);
+      if(!data)return null;
+      return React.createElement('div',{style:{background:'#0d0d14',borderRadius:10,padding:16,border:'1px solid #1e1e2e',marginTop:16,overflowX:'auto',maxHeight:480,overflowY:'auto'}},
+        React.createElement('pre',{style:{fontSize:12,color:'#94a3b8',lineHeight:1.6,whiteSpace:'pre-wrap',wordBreak:'break-all'}},JSON.stringify(data,null,2))
+      );
     }
-
-    // ─── MetricCard ───────────────────────────────────────────────────────────────
 
     function MetricCard({ icon, title, value, subtitle, color = '#6366f1' }) {
       return React.createElement('div', {
@@ -385,7 +318,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── IntegrationPanel ─────────────────────────────────────────────────────────
 
     function IntegrationPanel({ integrationName, integrations, onGoToSettings }) {
       const meta = INTEGRATION_META[integrationName];
@@ -421,7 +353,7 @@ export function getFrontendHTML(): string {
         return React.createElement('div', {
           style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 64, gap: 16 }
         },
-          React.createElement('div', { style: { fontSize: 48 } }, meta.emoji),
+          React.createElement(BrandIcon, { slug: meta.icon, color: meta.color, size: 42 }),
           React.createElement('div', { style: { fontSize: 18, fontWeight: 600, color: '#e2e8f0' } }, meta.label),
           React.createElement(Badge, { label: 'Not Connected', variant: 'muted' }),
           React.createElement('div', { style: { color: '#64748b', fontSize: 13, textAlign: 'center', maxWidth: 320, lineHeight: 1.6, marginTop: 4 } },
@@ -436,7 +368,7 @@ export function getFrontendHTML(): string {
       return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 16 } },
         React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 } },
           React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 12 } },
-            React.createElement('span', { style: { fontSize: 24 } }, meta.emoji),
+            React.createElement(BrandIcon, { slug: meta.icon, color: meta.color, size: 20 }),
             React.createElement('div', null,
               React.createElement('div', { style: { fontWeight: 700, fontSize: 17, color: '#e2e8f0' } }, meta.label),
               React.createElement(Badge, { label: 'Connected', variant: 'success' })
@@ -471,7 +403,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
     function Sidebar({ activePage, setActivePage, integrations, agents, chatOpen, setChatOpen }) {
       const marketingConnected = integrations.some(i => INTEGRATION_META[i.name]?.category === 'marketing' && i.connected);
@@ -502,16 +433,10 @@ export function getFrontendHTML(): string {
                 display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', boxShadow: '0 4px 12px rgba(99,102,241,0.4)'
               }
             },
-              React.createElement('img', {
-                src: 'https://logo.clearbit.com/aihive.global',
-                alt: 'AIHive',
-                width: 34, height: 34,
-                style: { objectFit: 'cover', width: '100%', height: '100%' },
-                onError: (e) => {
-                  e.target.style.display = 'none';
-                  e.target.parentNode.innerHTML = '<span style="font-size:18px">⬡</span>';
-                }
-              })
+              React.createElement('svg', { viewBox: '0 0 24 24', width: 22, height: 22, fill: 'none', xmlns: 'http://www.w3.org/2000/svg' },
+                React.createElement('path', { d: 'M12 2L21 7v10l-9 5L3 17V7z', fill: 'rgba(255,255,255,0.15)', stroke: 'rgba(255,255,255,0.85)', strokeWidth: '1.5', strokeLinejoin: 'round' }),
+                React.createElement('path', { d: 'M8 12h8M12 8v8', stroke: 'rgba(255,255,255,0.85)', strokeWidth: '1.5', strokeLinecap: 'round' })
+              )
             ),
             React.createElement('div', null,
               React.createElement('div', { style: { fontWeight: 800, fontSize: 15, color: '#e2e8f0', letterSpacing: '-0.01em' } }, 'AIHive'),
@@ -570,7 +495,86 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── Dashboard ────────────────────────────────────────────────────────────────
+
+    function FunnelSection({integrations}){
+      const STEPS=[
+        {n:'Impressions',v:45820,p:100,c:'#4285f4',s:'Search Console'},
+        {n:'Sessions',v:12543,p:27.4,c:'#6366f1',s:'GA4 all channels'},
+        {n:'Engaged',v:4821,p:10.5,c:'#8b5cf6',s:'GA4 >10s / 2+ pages'},
+        {n:'Sign-ups',v:342,p:0.7,c:'#10b981',s:'GA4 sign_up event'},
+      ];
+      const CHNLS=[
+        {n:'Organic Search',s:5643,u:156,p:45,c:'#4285f4'},
+        {n:'Direct',s:3201,u:89,p:26,c:'#34d399'},
+        {n:'Social',s:2150,u:67,p:17,c:'#f59e0b'},
+        {n:'Referral',s:980,u:21,p:8,c:'#8b5cf6'},
+        {n:'Email',s:569,u:9,p:5,c:'#ef4444'},
+      ];
+      const ga4=integrations.find(i=>i.name==='ga4'&&i.connected);
+      const [loading,setLoading]=useState(false);
+      const [synced,setSynced]=useState(false);
+      const sync=async()=>{
+        if(!ga4)return; setLoading(true);
+        try{
+          await fetch('/api/integrations/ga4/proxy?endpoint=funnel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            funnel:{steps:[
+              {name:'Session Start',filterExpression:{funnelEventFilter:{eventName:'session_start'}}},
+              {name:'Sign Up',filterExpression:{funnelEventFilter:{eventName:'sign_up'}}},
+            ]},
+            funnelBreakdown:{breakdownDimension:{dimensionName:'firstUserChannelGrouping'}},
+            dateRanges:[{startDate:'30daysAgo',endDate:'today'}]
+          })});setSynced(true);
+        }catch(e){}finally{setLoading(false);}
+      };
+      const S={bg:'#0a0a0f',card:{background:'#13131a',border:'1px solid #1e1e2e',borderRadius:14,padding:24,marginBottom:24}};
+      return React.createElement('div',{style:S.card},
+        React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}},
+          React.createElement('div',null,
+            React.createElement('div',{style:{fontWeight:700,fontSize:16,color:'#e2e8f0',display:'flex',alignItems:'center',gap:8}},React.createElement(Activity,{size:17,color:'#6366f1'}),'Acquisition Funnel'),
+            React.createElement('div',{style:{fontSize:12,color:'#64748b',marginTop:3}},'User signup sources · last 30 days')
+          ),
+          React.createElement('div',{style:{display:'flex',alignItems:'center',gap:8}},
+            !ga4&&React.createElement(Badge,{label:'Demo',variant:'warning'}),
+            synced&&React.createElement(Badge,{label:'Synced',variant:'success'}),
+            ga4&&React.createElement(Btn,{onClick:sync,variant:'ghost',size:'sm',disabled:loading},loading?React.createElement(Spinner,{size:12}):React.createElement(RefreshCw,{size:12}),'Sync GA4')
+          )
+        ),
+        React.createElement('div',{style:{display:'flex',alignItems:'center',gap:4,overflowX:'auto',paddingBottom:8,marginBottom:20}},
+          STEPS.map((st,i)=>React.createElement('div',{key:st.n,style:{display:'flex',alignItems:'center',flexShrink:0}},
+            React.createElement('div',{style:{minWidth:128,background:S.bg,border:'1px solid #1e1e2e',borderRadius:12,padding:'14px 16px',position:'relative',overflow:'hidden'}},
+              React.createElement('div',{style:{fontSize:20,fontWeight:800,color:st.c,lineHeight:1,marginBottom:3}},st.v.toLocaleString()),
+              React.createElement('div',{style:{fontSize:12,fontWeight:600,color:'#e2e8f0',marginBottom:2}},st.n),
+              React.createElement('div',{style:{fontSize:10,color:'#64748b',marginBottom:8}},st.s),
+              React.createElement('div',{style:{fontSize:11,fontWeight:700,color:i===0?'#64748b':st.p>5?'#10b981':st.p>1?'#f59e0b':'#ef4444'}},i===0?'100%':st.p.toFixed(1)+'%'),
+              React.createElement('div',{style:{position:'absolute',bottom:0,left:0,right:0,height:3,background:st.c+'30'}},React.createElement('div',{style:{height:'100%',width:st.p+'%',background:st.c}}))
+            ),
+            i<STEPS.length-1&&React.createElement('div',{style:{color:'#2a2a3e',fontSize:20,padding:'0 4px'}},'›')
+          ))
+        ),
+        React.createElement('div',{style:{fontFamily:'monospace',fontSize:11,color:'#4a5568',background:S.bg,border:'1px solid #1e1e2e',borderRadius:8,padding:'8px 12px',marginBottom:14,lineHeight:1.6}},
+          'GA4 v1alpha → POST /properties/{id}:runFunnelReport',React.createElement('br'),
+          'steps: session_start → sign_up | funnelBreakdown: firstUserChannelGrouping'
+        ),
+        React.createElement('div',{style:{fontWeight:600,fontSize:13,color:'#94a3b8',marginBottom:10}},'By Acquisition Channel'),
+        React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:8}},
+          CHNLS.map(ch=>React.createElement('div',{key:ch.n},
+            React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}},
+              React.createElement('div',{style:{display:'flex',alignItems:'center',gap:8}},
+                React.createElement('div',{style:{width:8,height:8,borderRadius:'50%',background:ch.c}}),
+                React.createElement('span',{style:{fontSize:13,color:'#e2e8f0',fontWeight:500}},ch.n)
+              ),
+              React.createElement('div',{style:{display:'flex',gap:16,fontSize:12}},
+                React.createElement('span',{style:{color:'#64748b'}},ch.s.toLocaleString()+' sessions'),
+                React.createElement('span',{style:{color:'#10b981',fontWeight:600}},ch.u+' signups')
+              )
+            ),
+            React.createElement('div',{style:{height:6,background:'#1e1e2e',borderRadius:3,overflow:'hidden'}},
+              React.createElement('div',{style:{height:'100%',width:ch.p+'%',background:ch.c,borderRadius:3}})
+            )
+          ))
+        )
+      );
+    }
 
     function Dashboard({ integrations, agents, setActivePage }) {
       const connectedCount = integrations.filter(i => i.connected).length;
@@ -604,6 +608,8 @@ export function getFrontendHTML(): string {
           })
         ),
 
+        React.createElement(FunnelSection, { integrations }),
+
         // Integration grid
         React.createElement('div', { style: { marginBottom: 12 } },
           React.createElement('h2', { style: { fontSize: 16, fontWeight: 700, color: '#e2e8f0', marginBottom: 16 } }, 'Integration Status')
@@ -623,7 +629,7 @@ export function getFrontendHTML(): string {
               }
             },
               React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-                React.createElement('span', { style: { fontSize: 26 } }, meta.emoji),
+                React.createElement(BrandIcon, { slug: meta.icon, color: meta.color, size: 22 }),
                 React.createElement(Badge, { label: connected ? 'Connected' : 'Not Connected', variant: connected ? 'success' : 'muted' })
               ),
               React.createElement('div', null,
@@ -658,7 +664,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── Marketing Workspace ──────────────────────────────────────────────────────
 
     function MarketingWorkspace({ integrations, setActivePage }) {
       const tabs = ['ahrefs', 'ga4', 'gsc', 'wordpress', 'youtube', 'producthunt'];
@@ -681,7 +686,7 @@ export function getFrontendHTML(): string {
                 display: 'flex', alignItems: 'center', gap: 7
               }
             },
-              React.createElement('span', null, INTEGRATION_META[tab].emoji),
+              React.createElement(BrandIcon, { slug: INTEGRATION_META[tab].icon, color: INTEGRATION_META[tab].color, size: 13, bare: true }),
               INTEGRATION_META[tab].label
             )
           )
@@ -695,7 +700,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── Sales Workspace ──────────────────────────────────────────────────────────
 
     function SalesWorkspace({ integrations, setActivePage }) {
       const tabs = ['linkedin', 'outlook'];
@@ -718,7 +722,7 @@ export function getFrontendHTML(): string {
                 display: 'flex', alignItems: 'center', gap: 7
               }
             },
-              React.createElement('span', null, INTEGRATION_META[tab].emoji),
+              React.createElement(BrandIcon, { slug: INTEGRATION_META[tab].icon, color: INTEGRATION_META[tab].color, size: 13, bare: true }),
               INTEGRATION_META[tab].label
             )
           )
@@ -732,7 +736,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── AgentCard ────────────────────────────────────────────────────────────────
 
     function AgentCard({ agent, onToggle, onEdit, onDelete, onRun }) {
       const [running, setRunning] = useState(false);
@@ -798,7 +801,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── AgentBuilder Modal ───────────────────────────────────────────────────────
 
     function AgentBuilderModal({ agent, onSave, onClose }) {
       const [form, setForm] = useState({
@@ -892,7 +894,10 @@ export function getFrontendHTML(): string {
                       type: 'checkbox', checked: form.tools.includes(t), onChange: () => toggleTool(t),
                       style: { accentColor: '#6366f1', width: 14, height: 14 }
                     }),
-                    React.createElement('span', null, INTEGRATION_META[t]?.emoji, ' ', t)
+                    React.createElement('span', { style: { display: 'flex', alignItems: 'center', gap: 5 } },
+                      React.createElement(BrandIcon, { slug: INTEGRATION_META[t]?.icon || t, color: INTEGRATION_META[t]?.color || '#6366f1', size: 12, bare: true }),
+                      t
+                    )
                   )
                 )
               )
@@ -912,7 +917,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── Agent Studio ─────────────────────────────────────────────────────────────
 
     function AgentStudio({ agents, setAgents, setChatOpen, setChatMessages, showToast }) {
       const [showBuilder, setShowBuilder] = useState(false);
@@ -1063,7 +1067,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── Settings ─────────────────────────────────────────────────────────────────
 
     function SettingsPage({ integrations, setIntegrations, llmConfig, setLlmConfig, showToast }) {
       const [llmForm, setLlmForm] = useState({
@@ -1156,7 +1159,7 @@ export function getFrontendHTML(): string {
               },
                 React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 } },
                   React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
-                    React.createElement('span', { style: { fontSize: 22 } }, meta.emoji),
+                    React.createElement(BrandIcon, { slug: meta.icon, color: meta.color, size: 20 }),
                     React.createElement('div', null,
                       React.createElement('div', { style: { fontWeight: 700, fontSize: 15, color: '#e2e8f0' } }, meta.label),
                       React.createElement('div', { style: { fontSize: 11, color: '#64748b', textTransform: 'capitalize' } }, meta.category)
@@ -1224,7 +1227,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── AI Chat Panel ────────────────────────────────────────────────────────────
 
     function AIChatPanel({ open, onClose, messages, setMessages, currentWorkspace, setCurrentWorkspace }) {
       const [input, setInput] = useState('');
@@ -1389,7 +1391,6 @@ export function getFrontendHTML(): string {
       );
     }
 
-    // ─── App ──────────────────────────────────────────────────────────────────────
 
     function App() {
       const [activePage, setActivePage] = useState('dashboard');
