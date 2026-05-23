@@ -1,0 +1,14 @@
+{
+  "name": "aihive-command",
+  "version": "1.0.0",
+  "description": "AIHive Command Center - All-in-one marketing & sales platform with AI agents",
+  "private": true,
+  "scripts": {
+    "deploy": "deno run --allow-net --allow-env deploy/deploy.ts",
+    "dev": "deno run --allow-net --allow-env --watch val.town/main.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vlduy123/aihive-command"
+  }
+}

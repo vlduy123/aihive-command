@@ -1,0 +1,19 @@
+# Local environment — never commit secrets
+.env
+
+# Node / Deno dependencies
+node_modules/
+
+# Claude-flow / Ruflo runtime data
+.claude-flow/
+.agents/
+.claude/
+
+# Log files
+*.log
+
+# Build output
+dist/
+
+# MCP config (may contain tokens)
+.mcp.json
