@@ -72,6 +72,16 @@ export function getFrontendHTML(): string {
       Cpu, Activity, Database, Bell
     } from 'lucide-react';
 
+    // ─── Helpers ────────────────────────────────────────────────────────────────
+
+    const parseTools = (tools) => {
+      if (Array.isArray(tools)) return tools;
+      if (typeof tools === 'string' && tools.trim()) {
+        try { return JSON.parse(tools); } catch { return []; }
+      }
+      return [];
+    };
+
     // ─── Constants ──────────────────────────────────────────────────────────────
 
     const COLORS = {
@@ -489,9 +499,20 @@ export function getFrontendHTML(): string {
             React.createElement('div', {
               style: {
                 width: 34, height: 34, borderRadius: 9, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, boxShadow: '0 4px 12px rgba(99,102,241,0.4)'
+                display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', boxShadow: '0 4px 12px rgba(99,102,241,0.4)'
               }
-            }, '⬡'),
+            },
+              React.createElement('img', {
+                src: 'https://logo.clearbit.com/aihive.global',
+                alt: 'AIHive',
+                width: 34, height: 34,
+                style: { objectFit: 'cover', width: '100%', height: '100%' },
+                onError: (e) => {
+                  e.target.style.display = 'none';
+                  e.target.parentNode.innerHTML = '<span style="font-size:18px">⬡</span>';
+                }
+              })
+            ),
             React.createElement('div', null,
               React.createElement('div', { style: { fontWeight: 800, fontSize: 15, color: '#e2e8f0', letterSpacing: '-0.01em' } }, 'AIHive'),
               React.createElement('div', { style: { fontSize: 10, color: '#64748b', fontWeight: 500, letterSpacing: '0.05em', textTransform: 'uppercase' } }, 'Command Center')
@@ -553,7 +574,7 @@ export function getFrontendHTML(): string {
 
     function Dashboard({ integrations, agents, setActivePage }) {
       const connectedCount = integrations.filter(i => i.connected).length;
-      const activeAgents = agents.filter(a => a.enabled).length;
+      const activeAgents = agents.filter(a => !!a.enabled).length;
       const marketingAgents = agents.filter(a => a.workspace === 'marketing').length;
       const salesAgents = agents.filter(a => a.workspace === 'sales').length;
 
@@ -742,16 +763,16 @@ export function getFrontendHTML(): string {
               React.createElement(Badge, { label: agent.workspace, variant: agent.workspace === 'marketing' ? 'default' : 'warning' })
             )
           ),
-          React.createElement(Toggle, { value: agent.enabled, onChange: (v) => onToggle(agent.id, v) })
+          React.createElement(Toggle, { value: !!agent.enabled, onChange: (v) => onToggle(agent.id, v ? 1 : 0) })
         ),
 
         agent.description && React.createElement('p', { style: { fontSize: 13, color: '#94a3b8', lineHeight: 1.5, margin: 0 } },
           agent.description.length > 120 ? agent.description.slice(0, 120) + '...' : agent.description
         ),
 
-        agent.tools && agent.tools.length > 0 && React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5 } },
+        parseTools(agent.tools).length > 0 && React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5 } },
           React.createElement('span', { style: { fontSize: 11, color: '#64748b', marginRight: 3, alignSelf: 'center' } }, 'Tools:'),
-          agent.tools.map(t =>
+          parseTools(agent.tools).map(t =>
             React.createElement('span', {
               key: t,
               style: {
@@ -784,8 +805,8 @@ export function getFrontendHTML(): string {
         name: agent?.name || '',
         workspace: agent?.workspace || 'marketing',
         description: agent?.description || '',
-        systemPrompt: agent?.systemPrompt || '',
-        tools: agent?.tools || [],
+        system_prompt: agent?.system_prompt || '',
+        tools: parseTools(agent?.tools),
         model: agent?.model || 'claude-sonnet-4-6',
       });
       const [saving, setSaving] = useState(false);
@@ -851,7 +872,7 @@ export function getFrontendHTML(): string {
             ),
 
             React.createElement(Textarea, { label: 'Description', value: form.description, onChange: v => setField('description', v), placeholder: 'Briefly describe what this agent does...', rows: 2 }),
-            React.createElement(Textarea, { label: 'System Prompt', value: form.systemPrompt, onChange: v => setField('systemPrompt', v), placeholder: 'You are a helpful marketing assistant...', rows: 6 }),
+            React.createElement(Textarea, { label: 'System Prompt', value: form.system_prompt, onChange: v => setField('system_prompt', v), placeholder: 'You are a helpful marketing assistant...', rows: 6 }),
 
             // Tools
             React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
@@ -905,8 +926,16 @@ export function getFrontendHTML(): string {
           const isEdit = !!form.id;
           const url = isEdit ? \`/api/agents/\${form.id}\` : '/api/agents';
           const method = isEdit ? 'PUT' : 'POST';
+          const payload = {
+            name: form.name,
+            workspace: form.workspace,
+            description: form.description,
+            system_prompt: form.system_prompt,
+            tools: Array.isArray(form.tools) ? JSON.stringify(form.tools) : form.tools,
+            model: form.model,
+          };
           const res = await fetch(url, {
-            method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form)
+            method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
           });
           if (!res.ok) throw new Error('Failed to save agent');
           const saved = await res.json();
@@ -946,15 +975,13 @@ export function getFrontendHTML(): string {
         }
       };
 
-      const handleRun = async (agent) => {
-        try {
-          const res = await fetch(\`/api/agents/\${agent.id}/run\`, { method: 'POST' });
-          if (!res.ok) throw new Error('Run failed');
-          const result = await res.json();
-          showToast(\`Agent "\${agent.name}" executed successfully\`, 'success');
-        } catch (e) {
-          showToast(\`Run failed: \${e.message}\`, 'error');
-        }
+      const handleRun = (agent) => {
+        setChatMessages(prev => [...prev, {
+          role: 'user',
+          content: \`Run agent: \${agent.name}. \${agent.description || 'Execute your primary task now.'}\`
+        }]);
+        setChatOpen(true);
+        showToast(\`Agent "\${agent.name}" activated in chat\`, 'success');
       };
 
       const openAiCreate = () => {
