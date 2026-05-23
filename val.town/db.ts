@@ -1,4 +1,17 @@
-import { sqlite } from "https://esm.town/v/std/sqlite";
+import { sqlite as _sqlite } from "https://esm.town/v/std/sqlite";
+
+// Compatibility shim: support sqlite.execute(sql, args) two-arg form
+// Val.town's libSQL client only accepts execute(string) or execute({sql, args})
+const _exec = _sqlite.execute.bind(_sqlite);
+export const sqlite = {
+  ..._sqlite,
+  execute: async (stmt: string | { sql: string; args?: any[] }, args?: any[]): Promise<any> => {
+    if (typeof stmt === "string" && args !== undefined) {
+      return _exec({ sql: stmt, args });
+    }
+    return _exec(stmt as any);
+  },
+};
 
 export async function initDB() {
   await sqlite.execute(`
@@ -157,4 +170,3 @@ async function seedDefaultAgents() {
   }
 }
 
-export { sqlite };

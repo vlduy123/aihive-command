@@ -8,36 +8,18 @@ function rowToAgent(columns: string[], row: any[]): Agent {
   for (let i = 0; i < columns.length; i++) {
     obj[columns[i]] = row[i];
   }
-
-  let tools: string[] = [];
-  if (obj.tools) {
-    try {
-      tools = JSON.parse(obj.tools);
-    } catch {
-      tools = [];
-    }
-  }
-
-  let metadata: Record<string, any> | undefined;
-  if (obj.metadata) {
-    try {
-      metadata = JSON.parse(obj.metadata);
-    } catch {
-      metadata = undefined;
-    }
-  }
-
   return {
     id: obj.id,
     name: obj.name,
     workspace: obj.workspace,
-    description: obj.description ?? undefined,
-    system_prompt: obj.system_prompt ?? undefined,
-    tools,
-    status: obj.status ?? "idle",
-    metadata,
+    description: obj.description ?? "",
+    system_prompt: obj.system_prompt ?? "",
+    tools: obj.tools ?? "[]",
+    model: obj.model ?? "claude-sonnet-4-6",
+    enabled: obj.enabled ?? 1,
     created_at: obj.created_at,
     updated_at: obj.updated_at,
+    created_by: obj.created_by ?? "user",
   } as Agent;
 }
 
@@ -48,12 +30,10 @@ export async function listAgents(workspace?: string): Promise<Agent[]> {
   let args: any[];
 
   if (workspace) {
-    query =
-      "SELECT id, name, workspace, description, system_prompt, tools, status, metadata, created_at, updated_at FROM agents WHERE workspace = ? ORDER BY name ASC";
+    query = "SELECT id, name, workspace, description, system_prompt, tools, model, enabled, created_at, updated_at, created_by FROM agents WHERE workspace = ? ORDER BY name ASC";
     args = [workspace];
   } else {
-    query =
-      "SELECT id, name, workspace, description, system_prompt, tools, status, metadata, created_at, updated_at FROM agents ORDER BY name ASC";
+    query = "SELECT id, name, workspace, description, system_prompt, tools, model, enabled, created_at, updated_at, created_by FROM agents ORDER BY name ASC";
     args = [];
   }
 
@@ -68,7 +48,7 @@ export async function listAgents(workspace?: string): Promise<Agent[]> {
 
 export async function getAgent(id: string): Promise<Agent | null> {
   const result = await sqlite.execute(
-    "SELECT id, name, workspace, description, system_prompt, tools, status, metadata, created_at, updated_at FROM agents WHERE id = ?",
+    "SELECT id, name, workspace, description, system_prompt, tools, model, enabled, created_at, updated_at, created_by FROM agents WHERE id = ?",
     [id]
   );
 
@@ -87,14 +67,14 @@ export async function createAgent(data: Partial<Agent>): Promise<Agent> {
   const workspace = data.workspace ?? "marketing";
   const description = data.description ?? null;
   const system_prompt = data.system_prompt ?? null;
-  const tools = data.tools ? JSON.stringify(data.tools) : JSON.stringify([]);
-  const status = data.status ?? "idle";
-  const metadata = data.metadata ? JSON.stringify(data.metadata) : null;
+  const tools = data.tools ? JSON.stringify(data.tools) : "[]";
+  const model = (data as any).model ?? "claude-sonnet-4-6";
+  const created_by = (data as any).created_by ?? "user";
 
   await sqlite.execute(
-    `INSERT INTO agents (id, name, workspace, description, system_prompt, tools, status, metadata, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, name, workspace, description, system_prompt, tools, status, metadata, now, now]
+    `INSERT INTO agents (id, name, workspace, description, system_prompt, tools, model, enabled, created_at, updated_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+    [id, name, workspace, description, system_prompt, tools, model, now, now, created_by]
   );
 
   const created = await getAgent(id);
@@ -117,31 +97,15 @@ export async function updateAgent(
 
   const name = data.name ?? existing.name;
   const workspace = data.workspace ?? existing.workspace;
-  const description =
-    "description" in data ? (data.description ?? null) : (existing.description ?? null);
-  const system_prompt =
-    "system_prompt" in data
-      ? (data.system_prompt ?? null)
-      : (existing.system_prompt ?? null);
-  const tools =
-    "tools" in data
-      ? JSON.stringify(data.tools ?? [])
-      : JSON.stringify(existing.tools ?? []);
-  const status = data.status ?? existing.status ?? "idle";
-  const metadata =
-    "metadata" in data
-      ? data.metadata
-        ? JSON.stringify(data.metadata)
-        : null
-      : existing.metadata
-      ? JSON.stringify(existing.metadata)
-      : null;
+  const description = "description" in data ? (data.description ?? null) : (existing.description ?? null);
+  const system_prompt = "system_prompt" in data ? (data.system_prompt ?? null) : (existing.system_prompt ?? null);
+  const tools = "tools" in data ? JSON.stringify(data.tools ?? []) : (existing.tools ?? "[]");
+  const model = (data as any).model ?? (existing as any).model ?? "claude-sonnet-4-6";
+  const enabled = "enabled" in data ? (data as any).enabled : (existing.enabled ?? 1);
 
   await sqlite.execute(
-    `UPDATE agents
-     SET name = ?, workspace = ?, description = ?, system_prompt = ?, tools = ?, status = ?, metadata = ?, updated_at = ?
-     WHERE id = ?`,
-    [name, workspace, description, system_prompt, tools, status, metadata, now, id]
+    `UPDATE agents SET name = ?, workspace = ?, description = ?, system_prompt = ?, tools = ?, model = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+    [name, workspace, description, system_prompt, tools, model, enabled, now, id]
   );
 
   return getAgent(id);

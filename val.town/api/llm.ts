@@ -9,8 +9,6 @@ const DEFAULT_CONFIG: LLMConfig = {
   model: "claude-sonnet-4-6",
   api_key: "",
   endpoint: "",
-  max_tokens: 4096,
-  temperature: 0.7,
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -26,8 +24,6 @@ function rowToConfig(columns: string[], row: any[]): LLMConfig {
     model: obj.model ?? DEFAULT_CONFIG.model,
     api_key: obj.api_key ?? "",
     endpoint: obj.endpoint ?? "",
-    max_tokens: obj.max_tokens ?? DEFAULT_CONFIG.max_tokens,
-    temperature: obj.temperature ?? DEFAULT_CONFIG.temperature,
   } as LLMConfig;
 }
 
@@ -35,8 +31,7 @@ function rowToConfig(columns: string[], row: any[]): LLMConfig {
 
 export async function getLLMConfig(): Promise<LLMConfig> {
   const result = await sqlite.execute(
-    "SELECT id, provider, model, api_key, endpoint, max_tokens, temperature FROM llm_config WHERE id = 'default'",
-    []
+    "SELECT id, provider, model, api_key, endpoint FROM llm_config WHERE id = 'default'"
   );
 
   if (!result.rows || result.rows.length === 0) {
@@ -57,22 +52,12 @@ export async function saveLLMConfig(
     model: config.model ?? existing.model,
     api_key: config.api_key ?? existing.api_key,
     endpoint: config.endpoint ?? existing.endpoint,
-    max_tokens: config.max_tokens ?? existing.max_tokens,
-    temperature: config.temperature ?? existing.temperature,
   };
 
+  const now = new Date().toISOString();
   await sqlite.execute(
-    `INSERT OR REPLACE INTO llm_config (id, provider, model, api_key, endpoint, max_tokens, temperature)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      merged.id,
-      merged.provider,
-      merged.model,
-      merged.api_key,
-      merged.endpoint,
-      merged.max_tokens,
-      merged.temperature,
-    ]
+    `INSERT OR REPLACE INTO llm_config (id, provider, model, api_key, endpoint, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    [merged.id, merged.provider, merged.model, merged.api_key, merged.endpoint ?? null, now]
   );
 
   return merged;
@@ -89,7 +74,7 @@ export async function callLLM(
     maxTokens?: number;
   }
 ): Promise<{ content: string; tool_calls?: any[] }> {
-  const maxTokens = options?.maxTokens ?? config.max_tokens ?? 4096;
+  const maxTokens = options?.maxTokens ?? 4096;
   const systemPrompt = options?.systemPrompt;
   const tools = options?.tools;
 
@@ -224,7 +209,7 @@ async function callOpenAI(
     model: config.model ?? "gpt-4o",
     messages: openAIMessages,
     max_tokens: maxTokens,
-    temperature: config.temperature ?? 0.7,
+    temperature: 0.7,
   };
 
   if (tools && tools.length > 0) {
