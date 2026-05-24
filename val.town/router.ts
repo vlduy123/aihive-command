@@ -3,6 +3,9 @@ import { listAgents, createAgent, updateAgent, deleteAgent } from "./api/agents.
 import { getLLMConfig, saveLLMConfig } from "./api/llm.ts";
 import { handleChat } from "./api/chat.ts";
 import { handleIntegrationProxy, getCredentials } from "./api/integrations.ts";
+import { getAppJS } from "./frontend_js.ts";
+import { getChartsJS } from "./frontend_charts.ts";
+import { getUIJS } from "./frontend_ui.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,17 +38,47 @@ export async function handleRequest(req: Request, url: URL): Promise<Response> {
       return json({ status: "ok", timestamp: new Date().toISOString() });
     }
 
+    // GET /api/app-js — serve React application JavaScript
+    if (pathname === "/api/app-js" && method === "GET") {
+      return new Response(getAppJS(), {
+        headers: {
+          "Content-Type": "application/javascript",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          ...corsHeaders,
+        },
+      });
+    }
+
+    // GET /api/app-charts — serve chart components as ES module
+    if (pathname === "/api/app-charts" && method === "GET") {
+      return new Response(getChartsJS(), {
+        headers: { "Content-Type": "application/javascript", "Cache-Control": "no-cache, no-store, must-revalidate", ...corsHeaders },
+      });
+    }
+
+    // GET /api/app-ui — serve UI primitives as ES module
+    if (pathname === "/api/app-ui" && method === "GET") {
+      return new Response(getUIJS(), {
+        headers: { "Content-Type": "application/javascript", "Cache-Control": "no-cache, no-store, must-revalidate", ...corsHeaders },
+      });
+    }
+
     // Integrations routes
     // GET /api/integrations — list all integrations
     if (pathname === "/api/integrations" && method === "GET") {
       const result = await sqlite.execute("SELECT * FROM integrations ORDER BY name ASC");
       const integrations = result.rows.map((row) => {
         const obj = rowToObject(result.columns, row);
+        let extra_config: Record<string, any> | null = null;
+        if (obj.extra_config) {
+          try { extra_config = JSON.parse(String(obj.extra_config)); } catch { extra_config = null; }
+        }
         return {
           ...obj,
           connected: !!(obj.api_key || obj.access_token),
           api_key: obj.api_key ? String(obj.api_key).slice(0, 4) + "***" : undefined,
           access_token: obj.access_token ? "***" : undefined,
+          extra_config,
         };
       });
       return json(integrations);
@@ -59,27 +92,34 @@ export async function handleRequest(req: Request, url: URL): Promise<Response> {
       const now = new Date().toISOString();
 
       const existing = await sqlite.execute(
-        "SELECT id FROM integrations WHERE name = ?",
+        "SELECT id, api_key, api_secret, access_token, refresh_token, extra_config FROM integrations WHERE name = ?",
         [name]
       );
 
+      // Helper: only update a credential field if a new non-empty value is explicitly provided
+      const pick = (newVal: any, existingVal: any) =>
+        (newVal !== undefined && newVal !== null && newVal !== "") ? newVal : (existingVal ?? null);
+
+      // Helper: merge extra_config objects
+      const mergeEC = (newEC: any, existingRaw: any): string | null => {
+        const existing = existingRaw ? (() => { try { return JSON.parse(String(existingRaw)); } catch { return {}; } })() : {};
+        if (newEC == null) return existingRaw ?? null;
+        const merged = { ...existing, ...newEC };
+        // Remove keys explicitly set to null/empty
+        Object.keys(merged).forEach(k => { if (merged[k] === null || merged[k] === "") delete merged[k]; });
+        return Object.keys(merged).length ? JSON.stringify(merged) : null;
+      };
+
       if (existing.rows.length > 0) {
-        // Update
+        const [, exKey, exSec, exToken, exRefresh, exEC] = existing.rows[0] as any[];
         await sqlite.execute(
-          `UPDATE integrations SET
-            api_key = ?,
-            api_secret = ?,
-            access_token = ?,
-            refresh_token = ?,
-            extra_config = ?,
-            updated_at = ?
-          WHERE name = ?`,
+          `UPDATE integrations SET api_key=?,api_secret=?,access_token=?,refresh_token=?,extra_config=?,updated_at=? WHERE name=?`,
           [
-            body.api_key ?? null,
-            body.api_secret ?? null,
-            body.access_token ?? null,
-            body.refresh_token ?? null,
-            body.extra_config != null ? JSON.stringify(body.extra_config) : null,
+            pick(body.api_key, exKey),
+            pick(body.api_secret, exSec),
+            pick(body.access_token, exToken),
+            pick(body.refresh_token, exRefresh),
+            mergeEC(body.extra_config, exEC),
             now,
             name,
           ]
@@ -93,10 +133,10 @@ export async function handleRequest(req: Request, url: URL): Promise<Response> {
           [
             id,
             name,
-            body.api_key ?? null,
-            body.api_secret ?? null,
-            body.access_token ?? null,
-            body.refresh_token ?? null,
+            body.api_key || null,
+            body.api_secret || null,
+            body.access_token || null,
+            body.refresh_token || null,
             body.extra_config != null ? JSON.stringify(body.extra_config) : null,
             now,
             now,
@@ -120,9 +160,9 @@ export async function handleRequest(req: Request, url: URL): Promise<Response> {
       return json({ success: true, message: `Integration '${name}' deleted` });
     }
 
-    // GET /api/integrations/:name/data — proxy to integration API
+    // GET|POST /api/integrations/:name/data — proxy to integration API
     const integrationDataMatch = pathname.match(/^\/api\/integrations\/([^/]+)\/data$/);
-    if (integrationDataMatch && method === "GET") {
+    if (integrationDataMatch && (method === "GET" || method === "POST")) {
       const name = integrationDataMatch[1];
       const credentials = await getCredentials(name);
       if (!credentials) {

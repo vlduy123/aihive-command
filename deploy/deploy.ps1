@@ -40,6 +40,10 @@ $Files = @(
   "api/chat.ts",
   "router.ts",
   "frontend.ts",
+  "frontend_js.ts",
+  "frontend_js2.ts",
+  "frontend_charts.ts",
+  "frontend_ui.ts",
   "main.ts"
 )
 

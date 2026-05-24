@@ -26,34 +26,20 @@ async function safeJson(res: Response): Promise<any> {
   try { return JSON.parse(text); } catch { return { error: text.slice(0, 500) || `HTTP ${res.status}` }; }
 }
 
-export async function getCredentials(
-  name: string
-): Promise<IntegrationCredentials | null> {
+export async function getCredentials(name: string): Promise<IntegrationCredentials | null> {
   const result = await sqlite.execute(
     "SELECT api_key, api_secret, access_token, refresh_token, extra_config FROM integrations WHERE name = ?",
     [name]
   );
-
-  if (!result.rows || result.rows.length === 0) {
-    return null;
-  }
-
+  if (!result.rows || result.rows.length === 0) return null;
   const cols = result.columns;
   const row = result.rows[0];
   const obj: Record<string, any> = {};
-  for (let i = 0; i < cols.length; i++) {
-    obj[cols[i]] = row[i];
-  }
-
-  let extra_config: Record<string, any> | undefined = undefined;
+  for (let i = 0; i < cols.length; i++) obj[cols[i]] = row[i];
+  let extra_config: Record<string, any> | undefined;
   if (obj.extra_config) {
-    try {
-      extra_config = JSON.parse(obj.extra_config);
-    } catch {
-      extra_config = {};
-    }
+    try { extra_config = JSON.parse(obj.extra_config); } catch { extra_config = {}; }
   }
-
   return {
     api_key: obj.api_key ?? undefined,
     api_secret: obj.api_secret ?? undefined,
@@ -63,146 +49,115 @@ export async function getCredentials(
   };
 }
 
-export async function listIntegrations(): Promise<any[]> {
-  const result = await sqlite.execute(
-    "SELECT id, name, api_key, api_secret, access_token, refresh_token, extra_config, created_at, updated_at FROM integrations ORDER BY name ASC",
-    []
-  );
-
-  if (!result.rows || result.rows.length === 0) {
-    return [];
-  }
-
-  const cols = result.columns;
-
-  return result.rows.map((row) => {
-    const obj: Record<string, any> = {};
-    for (let i = 0; i < cols.length; i++) {
-      obj[cols[i]] = row[i];
-    }
-
-    const connected = !!(obj.api_key || obj.access_token);
-
-    let maskedApiKey: string | undefined = undefined;
-    if (obj.api_key) {
-      const key = String(obj.api_key);
-      maskedApiKey = key.length > 4 ? key.slice(0, 4) + "***" : "***";
-    }
-
-    let extra_config: Record<string, any> | undefined = undefined;
-    if (obj.extra_config) {
-      try {
-        extra_config = JSON.parse(obj.extra_config);
-      } catch {
-        extra_config = {};
-      }
-    }
-
-    return {
-      id: obj.id,
-      name: obj.name,
-      connected,
-      api_key: maskedApiKey,
-      access_token: obj.access_token ? "***" : undefined,
-      extra_config,
-      created_at: obj.created_at,
-      updated_at: obj.updated_at,
-    };
-  });
-}
-
-export async function saveIntegration(
-  name: string,
-  creds: IntegrationCredentials
-): Promise<void> {
-  const existing = await sqlite.execute(
-    "SELECT id FROM integrations WHERE name = ?",
-    [name]
-  );
-
-  const extraConfigStr = creds.extra_config
-    ? JSON.stringify(creds.extra_config)
-    : null;
-
-  const now = new Date().toISOString();
-
-  if (existing.rows && existing.rows.length > 0) {
-    await sqlite.execute(
-      `INSERT OR REPLACE INTO integrations (id, name, api_key, api_secret, access_token, refresh_token, extra_config, created_at, updated_at)
-       VALUES (
-         (SELECT id FROM integrations WHERE name = ?),
-         ?, ?, ?, ?, ?, ?,
-         (SELECT created_at FROM integrations WHERE name = ?),
-         ?
-       )`,
-      [
-        name,
-        name,
-        creds.api_key ?? null,
-        creds.api_secret ?? null,
-        creds.access_token ?? null,
-        creds.refresh_token ?? null,
-        extraConfigStr,
-        name,
-        now,
-      ]
-    );
-  } else {
-    const id = crypto.randomUUID();
-    await sqlite.execute(
-      `INSERT INTO integrations (id, name, api_key, api_secret, access_token, refresh_token, extra_config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        name,
-        creds.api_key ?? null,
-        creds.api_secret ?? null,
-        creds.access_token ?? null,
-        creds.refresh_token ?? null,
-        extraConfigStr,
-        now,
-        now,
-      ]
-    );
-  }
-}
-
-export async function removeIntegration(name: string): Promise<void> {
-  await sqlite.execute("DELETE FROM integrations WHERE name = ?", [name]);
-}
-
-// ─── Individual integration handlers ────────────────────────────────────────
-
-async function handleAhrefs(
-  endpoint: string,
-  params: string,
-  creds: IntegrationCredentials
-): Promise<Response> {
+// ─── Ahrefs ──────────────────────────────────────────────────────────────────
+// Docs: https://docs.ahrefs.com/en/api/reference/site-explorer
+// Auth: Authorization: Bearer {api_key}
+// IMPORTANT: /metrics and /domain-rating do NOT accept a 'select' parameter.
+// /all-backlinks and /organic-keywords require 'select'.
+// /keywords-explorer/matching-terms requires 'select' and 'country'.
+async function handleAhrefs(endpoint: string, params: string, creds: IntegrationCredentials): Promise<Response> {
   const base = "https://api.ahrefs.com/v3";
-  const headers = {
-    Authorization: `Bearer ${creds.api_key}`,
-    "Content-Type": "application/json",
-  };
+  const headers = { Authorization: `Bearer ${creds.api_key}` };
+  const today = new Date().toISOString().slice(0, 10);
+
+  const sp = new URLSearchParams(params);
+  // Use URL param → saved extra_config.target → empty
+  const target = sp.get("target") || creds.extra_config?.target || "";
+  if (target) sp.set("target", target);
 
   let url: string;
   switch (endpoint) {
-    case "site-explorer":
-      url = `${base}/site-explorer/overview?${params}`;
+    case "site-explorer": {
+      // GET /v3/site-explorer/metrics — required: target, date — NO select
+      if (!sp.get("target")) {
+        return json({ error: "Target domain required. Set it in Ahrefs Settings." }, 400);
+      }
+      if (!sp.has("date")) sp.set("date", today);
+      sp.delete("select"); // metrics endpoint does not accept select
+      url = `${base}/site-explorer/metrics?${sp.toString()}`;
       break;
-    case "keywords":
-      url = `${base}/keywords-explorer/matching-terms?${params}`;
+    }
+    case "keywords": {
+      // GET /v3/keywords-explorer/matching-terms — required: select, country
+      // Optional: keywords (comma-separated seed keywords)
+      if (!sp.has("select")) sp.set("select", "keyword,volume,difficulty,cpc,traffic_potential,global_volume");
+      if (!sp.has("country")) sp.set("country", "us");
+      // Param is 'keywords' (plural), not 'keyword'
+      const seed = sp.get("keywords") || sp.get("keyword") || sp.get("q") || "seo";
+      sp.delete("keyword");
+      sp.delete("q");
+      sp.set("keywords", seed);
+      if (!sp.has("limit")) sp.set("limit", "50");
+      url = `${base}/keywords-explorer/matching-terms?${sp.toString()}`;
       break;
-    case "backlinks":
-      url = `${base}/site-explorer/all-backlinks?${params}`;
+    }
+    case "backlinks": {
+      // GET /v3/site-explorer/all-backlinks — required: target, select
+      if (!sp.get("target")) {
+        return json({ error: "Target domain required. Set it in Ahrefs Settings." }, 400);
+      }
+      if (!sp.has("select")) {
+        sp.set("select", "url_from,domain_rating_source,anchor,name_source,title,first_seen,is_dofollow,traffic");
+      }
+      if (!sp.has("limit")) sp.set("limit", "50");
+      url = `${base}/site-explorer/all-backlinks?${sp.toString()}`;
       break;
-    case "domain-rating":
-      url = `${base}/site-explorer/domain-rating?${params}`;
+    }
+    case "domain-rating": {
+      // GET /v3/site-explorer/domain-rating — required: target, date — NO select
+      if (!sp.get("target")) sp.set("target", "ahrefs.com");
+      if (!sp.has("date")) sp.set("date", today);
+      sp.delete("select"); // not supported
+      url = `${base}/site-explorer/domain-rating?${sp.toString()}`;
       break;
-    case "organic-keywords":
-      url = `${base}/site-explorer/organic-keywords?${params}`;
+    }
+    case "organic-keywords": {
+      // GET /v3/site-explorer/organic-keywords — required: target, select, date
+      if (!sp.get("target")) {
+        return json({ error: "Target domain required. Set it in Ahrefs Settings." }, 400);
+      }
+      if (!sp.has("select")) sp.set("select", "keyword,volume,sum_traffic,best_position,cpc,keyword_difficulty");
+      if (!sp.has("country")) sp.set("country", "us");
+      if (!sp.has("date")) sp.set("date", today);
+      if (!sp.has("limit")) sp.set("limit", "50");
+      url = `${base}/site-explorer/organic-keywords?${sp.toString()}`;
       break;
+    }
+    case "top-pages": {
+      // GET /v3/site-explorer/top-pages — required: target, select, date
+      if (!sp.get("target")) {
+        return json({ error: "Target domain required. Set it in Ahrefs Settings." }, 400);
+      }
+      if (!sp.has("select")) sp.set("select", "url,sum_traffic,keywords,top_keyword,top_keyword_best_position,value");
+      if (!sp.has("country")) sp.set("country", "us");
+      if (!sp.has("date")) sp.set("date", today);
+      if (!sp.has("limit")) sp.set("limit", "50");
+      url = `${base}/site-explorer/top-pages?${sp.toString()}`;
+      break;
+    }
+    case "referring-domains": {
+      // GET /v3/site-explorer/refdomains — required: target, select
+      // NOTE: path is /refdomains, NOT /referring-domains
+      if (!sp.get("target")) {
+        return json({ error: "Target domain required. Set it in Ahrefs Settings." }, 400);
+      }
+      if (!sp.has("select")) sp.set("select", "domain,domain_rating,dofollow_links,dofollow_linked_domains,traffic_domain,first_seen");
+      if (!sp.has("limit")) sp.set("limit", "50");
+      url = `${base}/site-explorer/refdomains?${sp.toString()}`;
+      break;
+    }
+    case "backlinks-stats": {
+      // GET /v3/site-explorer/backlinks-stats — required: target, date — NO select
+      if (!sp.get("target")) {
+        return json({ error: "Target domain required. Set it in Ahrefs Settings." }, 400);
+      }
+      if (!sp.has("date")) sp.set("date", today);
+      sp.delete("select");
+      url = `${base}/site-explorer/backlinks-stats?${sp.toString()}`;
+      break;
+    }
     default:
-      url = `${base}/${endpoint}?${params}`;
+      return json({ error: `Unknown Ahrefs endpoint: ${endpoint}` }, 400);
   }
 
   const res = await fetch(url, { headers });
@@ -210,58 +165,148 @@ async function handleAhrefs(
   return json(data, res.status);
 }
 
-async function handleGA4(
-  req: Request,
-  endpoint: string,
-  params: string,
-  creds: IntegrationCredentials
-): Promise<Response> {
+// ─── Google Analytics 4 ──────────────────────────────────────────────────────
+// Docs: https://developers.google.com/analytics/devguides/reporting/data/v1/rest
+// All reporting endpoints use POST. Auth: Bearer access_token (OAuth 2.0).
+async function handleGA4(req: Request, endpoint: string, _params: string, creds: IntegrationCredentials): Promise<Response> {
   const propertyId = creds.extra_config?.property_id ?? "";
   const base = `https://analyticsdata.googleapis.com/v1beta/properties`;
-  const headers = {
-    Authorization: `Bearer ${creds.access_token}`,
-    "Content-Type": "application/json",
-  };
+  const headers = { Authorization: `Bearer ${creds.access_token}`, "Content-Type": "application/json" };
 
   let url: string;
-  let method = "GET";
-  let body: string | undefined;
+  let body: string;
 
   switch (endpoint) {
-    case "realtime":
+    case "realtime": {
+      // POST runRealtimeReport
       url = `${base}/${propertyId}:runRealtimeReport`;
+      const rb = await req.text();
+      body = rb || JSON.stringify({
+        dimensions: [{ name: "country" }],
+        metrics: [{ name: "activeUsers" }],
+        minuteRanges: [{ name: "last30Minutes", startMinutesAgo: 29, endMinutesAgo: 0 }],
+      });
       break;
-    case "report":
+    }
+    case "report": {
+      // POST runReport
       url = `${base}/${propertyId}:runReport`;
-      method = "POST";
-      body = await req.text();
+      const rb = await req.text();
+      body = rb || JSON.stringify({
+        dimensions: [{ name: "sessionDefaultChannelGroup" }],
+        metrics: [{ name: "sessions" }, { name: "activeUsers" }, { name: "eventCount" }],
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+      });
       break;
-    case "funnel":
+    }
+    case "user-acquisition": {
+      // POST runReport — acquisition by channel
+      url = `${base}/${propertyId}:runReport`;
+      body = JSON.stringify({
+        dimensions: [{ name: "sessionDefaultChannelGroup" }],
+        metrics: [{ name: "sessions" }, { name: "newUsers" }, { name: "engagementRate" }],
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+        orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+        limit: "20",
+      });
+      break;
+    }
+    case "top-events": {
+      // POST runReport — top events by count
+      url = `${base}/${propertyId}:runReport`;
+      body = JSON.stringify({
+        dimensions: [{ name: "eventName" }],
+        metrics: [{ name: "eventCount" }, { name: "totalUsers" }],
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+        orderBys: [{ metric: { metricName: "eventCount" }, desc: true }],
+        limit: "20",
+      });
+      break;
+    }
+    case "kpi": {
+      // POST runReport — overall KPIs, no dimensions (returns single aggregated row)
+      url = `${base}/${propertyId}:runReport`;
+      const sp2 = new URLSearchParams(_params);
+      const kpiDays = sp2.get("days") || "30";
+      body = JSON.stringify({
+        metrics: [
+          { name: "sessions" }, { name: "activeUsers" }, { name: "newUsers" },
+          { name: "engagementRate" }, { name: "screenPageViews" }, { name: "bounceRate" },
+        ],
+        dateRanges: [
+          { name: "current", startDate: `${kpiDays}daysAgo`, endDate: "today" },
+          { name: "previous", startDate: `${Number(kpiDays) * 2}daysAgo`, endDate: `${Number(kpiDays) + 1}daysAgo` },
+        ],
+      });
+      break;
+    }
+    case "traffic-over-time": {
+      // POST runReport — daily sessions for line chart
+      url = `${base}/${propertyId}:runReport`;
+      const sp3 = new URLSearchParams(_params);
+      const totDays = sp3.get("days") || "30";
+      body = JSON.stringify({
+        dimensions: [{ name: "date" }],
+        metrics: [{ name: "sessions" }, { name: "activeUsers" }],
+        dateRanges: [{ startDate: `${totDays}daysAgo`, endDate: "today" }],
+        orderBys: [{ dimension: { dimensionName: "date" }, desc: false }],
+        limit: "90",
+      });
+      break;
+    }
+    case "device-breakdown": {
+      // POST runReport — sessions by device category
+      url = `${base}/${propertyId}:runReport`;
+      body = JSON.stringify({
+        dimensions: [{ name: "deviceCategory" }],
+        metrics: [{ name: "sessions" }, { name: "activeUsers" }, { name: "bounceRate" }],
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+        orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+      });
+      break;
+    }
+    case "page-views": {
+      // POST runReport — top pages by screen views
+      url = `${base}/${propertyId}:runReport`;
+      body = JSON.stringify({
+        dimensions: [{ name: "pagePath" }],
+        metrics: [{ name: "screenPageViews" }, { name: "sessions" }, { name: "bounceRate" }],
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+        orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+        limit: "25",
+      });
+      break;
+    }
+    case "funnel": {
+      // POST runFunnelReport (v1alpha)
       url = `https://analyticsdata.googleapis.com/v1alpha/properties/${propertyId}:runFunnelReport`;
-      method = "POST";
-      body = await req.text();
+      const rb = await req.text();
+      body = rb || JSON.stringify({
+        dateRanges: [{ startDate: "30daysAgo", endDate: "today" }],
+        funnel: {
+          steps: [
+            { name: "Session Start", filterExpression: { funnelEventFilter: { eventName: "session_start" } } },
+            { name: "Sign Up", filterExpression: { funnelEventFilter: { eventName: "sign_up" } } },
+          ],
+        },
+      });
       break;
+    }
     default:
       url = `${base}/${propertyId}/${endpoint}`;
+      body = await req.text();
   }
 
-  const res = await fetch(url, { method, headers, body });
+  const res = await fetch(url, { method: "POST", headers, body });
   const data = await safeJson(res);
   return json(data, res.status);
 }
 
-async function handleGSC(
-  req: Request,
-  endpoint: string,
-  params: string,
-  creds: IntegrationCredentials
-): Promise<Response> {
+// ─── Google Search Console ────────────────────────────────────────────────────
+async function handleGSC(req: Request, endpoint: string, _params: string, creds: IntegrationCredentials): Promise<Response> {
   const siteUrl = encodeURIComponent(creds.extra_config?.site_url ?? "");
   const base = `https://searchconsole.googleapis.com/webmasters/v3/sites`;
-  const headers = {
-    Authorization: `Bearer ${creds.access_token}`,
-    "Content-Type": "application/json",
-  };
+  const headers = { Authorization: `Bearer ${creds.access_token}`, "Content-Type": "application/json" };
 
   let url: string;
   let method = "GET";
@@ -269,11 +314,30 @@ async function handleGSC(
 
   switch (endpoint) {
     case "search-analytics":
-    case "searchanalytics":
+    case "searchanalytics": {
       url = `${base}/${siteUrl}/searchAnalytics/query`;
       method = "POST";
-      body = await req.text();
+      const rb = await req.text();
+      body = rb || JSON.stringify({
+        startDate: "2025-01-01",
+        endDate: new Date().toISOString().slice(0, 10),
+        dimensions: ["query"],
+        rowLimit: 50,
+      });
       break;
+    }
+    case "pages": {
+      // POST search analytics grouped by page
+      url = `${base}/${siteUrl}/searchAnalytics/query`;
+      method = "POST";
+      body = JSON.stringify({
+        startDate: new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10),
+        endDate: new Date().toISOString().slice(0, 10),
+        dimensions: ["page"],
+        rowLimit: 25,
+      });
+      break;
+    }
     case "sitemaps":
       url = `${base}/${siteUrl}/sitemaps`;
       break;
@@ -286,20 +350,13 @@ async function handleGSC(
   return json(data, res.status);
 }
 
-async function handleLinkedIn(
-  endpoint: string,
-  params: string,
-  creds: IntegrationCredentials
-): Promise<Response> {
+// ─── LinkedIn ─────────────────────────────────────────────────────────────────
+async function handleLinkedIn(endpoint: string, params: string, creds: IntegrationCredentials): Promise<Response> {
   const base = "https://api.linkedin.com/v2";
-  const headers = {
-    Authorization: `Bearer ${creds.access_token}`,
-    "Content-Type": "application/json",
-  };
-
-  let url: string;
+  const headers = { Authorization: `Bearer ${creds.access_token}`, "Content-Type": "application/json" };
   const authorId = creds.extra_config?.author_id ?? "";
 
+  let url: string;
   switch (endpoint) {
     case "profile":
       url = `${base}/me?projection=(id,firstName,lastName,profilePicture)`;
@@ -322,17 +379,10 @@ async function handleLinkedIn(
   return json(data, res.status);
 }
 
-async function handleOutlook(
-  req: Request,
-  endpoint: string,
-  params: string,
-  creds: IntegrationCredentials
-): Promise<Response> {
+// ─── Outlook ─────────────────────────────────────────────────────────────────
+async function handleOutlook(req: Request, endpoint: string, params: string, creds: IntegrationCredentials): Promise<Response> {
   const base = "https://graph.microsoft.com/v1.0/me";
-  const headers = {
-    Authorization: `Bearer ${creds.access_token}`,
-    "Content-Type": "application/json",
-  };
+  const headers = { Authorization: `Bearer ${creds.access_token}`, "Content-Type": "application/json" };
 
   let url: string;
   let method = "GET";
@@ -349,10 +399,10 @@ async function handleOutlook(
       body = await req.text();
       break;
     case "calendar":
-      url = `${base}/calendar/events?${params}`;
+      url = `${base}/calendar/events?$top=20&$orderby=start/dateTime asc&${params}`;
       break;
     case "contacts":
-      url = `${base}/contacts?${params}`;
+      url = `${base}/contacts?$top=20&${params}`;
       break;
     default:
       url = `${base}/${endpoint}?${params}`;
@@ -363,19 +413,15 @@ async function handleOutlook(
   return json(data, res.status);
 }
 
-async function handleWordPress(
-  req: Request,
-  endpoint: string,
-  params: string,
-  creds: IntegrationCredentials
-): Promise<Response> {
-  const siteUrl = creds.extra_config?.site_url ?? "";
+// ─── WordPress ───────────────────────────────────────────────────────────────
+// Docs: https://developer.wordpress.org/rest-api/
+// Auth: Basic base64(username:application_password). Requires HTTPS.
+async function handleWordPress(req: Request, endpoint: string, params: string, creds: IntegrationCredentials): Promise<Response> {
+  const siteUrl = (creds.extra_config?.site_url ?? "").replace(/\/$/, "");
+  if (!siteUrl) return json({ error: "WordPress site URL required. Add it in Settings." }, 400);
   const base = `${siteUrl}/wp-json/wp/v2`;
-  const basicAuth = btoa(`${creds.api_key}:${creds.api_secret}`);
-  const headers = {
-    Authorization: `Basic ${basicAuth}`,
-    "Content-Type": "application/json",
-  };
+  const basicAuth = btoa(`${creds.api_key ?? ""}:${creds.api_secret ?? ""}`);
+  const headers = { Authorization: `Basic ${basicAuth}`, "Content-Type": "application/json" };
 
   let url: string;
   let method = "GET";
@@ -383,16 +429,16 @@ async function handleWordPress(
 
   switch (endpoint) {
     case "posts":
-      url = `${base}/posts?${params}`;
+      url = `${base}/posts?per_page=20&orderby=date&order=desc&${params}`;
       break;
     case "pages":
-      url = `${base}/pages?${params}`;
+      url = `${base}/pages?per_page=20&orderby=date&order=desc&${params}`;
       break;
     case "media":
-      url = `${base}/media?${params}`;
+      url = `${base}/media?per_page=20&${params}`;
       break;
     case "categories":
-      url = `${base}/categories?${params}`;
+      url = `${base}/categories?per_page=50&${params}`;
       break;
     case "publish-post":
       url = `${base}/posts`;
@@ -408,48 +454,50 @@ async function handleWordPress(
   return json(data, res.status);
 }
 
-async function handleYouTube(
-  endpoint: string,
-  params: string,
-  creds: IntegrationCredentials,
-  searchParams: URLSearchParams
-): Promise<Response> {
+// ─── YouTube ─────────────────────────────────────────────────────────────────
+// Docs: https://developers.google.com/youtube/v3
+// mine=true requires OAuth. API key works only for public data.
+// channels?mine=true, playlists?mine=true → OAuth required.
+async function handleYouTube(endpoint: string, params: string, creds: IntegrationCredentials): Promise<Response> {
   const base = "https://www.googleapis.com/youtube/v3";
-  const analyticsBase = "https://youtubeanalytics.googleapis.com/v2";
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
+  const hasOAuth = !!creds.access_token;
+  const headers: Record<string, string> = {};
   let authParam = "";
-  if (creds.access_token) {
+
+  if (hasOAuth) {
     headers["Authorization"] = `Bearer ${creds.access_token}`;
   } else if (creds.api_key) {
     authParam = `key=${encodeURIComponent(creds.api_key)}`;
   }
 
-  const joinParams = (a: string, b: string) =>
-    [a, b].filter(Boolean).join("&");
+  const jp = (a: string, b: string) => [a, b].filter(Boolean).join("&");
 
   let url: string;
   switch (endpoint) {
     case "channels":
-      url = `${base}/channels?part=snippet,statistics&mine=true&${joinParams(params, authParam)}`;
+      if (hasOAuth) {
+        url = `${base}/channels?part=snippet,statistics&mine=true&${jp(params, authParam)}`;
+      } else {
+        // API key: mostPopular chart (no mine=true allowed without OAuth)
+        url = `${base}/channels?part=snippet,statistics&chart=mostPopular&maxResults=5&${jp(params, authParam)}`;
+      }
       break;
     case "videos":
-      url = `${base}/videos?part=snippet,statistics&${joinParams(params, authParam)}`;
+      // chart=mostPopular works with API key
+      url = `${base}/videos?part=snippet,statistics&chart=mostPopular&maxResults=10&${jp(params, authParam)}`;
       break;
     case "playlists":
-      url = `${base}/playlists?part=snippet&mine=true&${joinParams(params, authParam)}`;
+      if (hasOAuth) {
+        url = `${base}/playlists?part=snippet&mine=true&maxResults=20&${jp(params, authParam)}`;
+      } else {
+        return json({ error: "Playlists requires an OAuth access token. Add one in Settings." }, 401);
+      }
       break;
     case "search":
-      url = `${base}/search?part=snippet&${joinParams(params, authParam)}`;
-      break;
-    case "analytics":
-      url = `${analyticsBase}/reports?${joinParams(params, authParam)}`;
+      url = `${base}/search?part=snippet&type=video&maxResults=10&${jp(params, authParam)}`;
       break;
     default:
-      url = `${base}/${endpoint}?${joinParams(params, authParam)}`;
+      url = `${base}/${endpoint}?${jp(params, authParam)}`;
   }
 
   const res = await fetch(url, { headers });
@@ -457,42 +505,126 @@ async function handleYouTube(
   return json(data, res.status);
 }
 
-async function handleProductHunt(
-  endpoint: string,
-  searchParams: URLSearchParams,
-  creds: IntegrationCredentials
-): Promise<Response> {
+// ─── Product Hunt ─────────────────────────────────────────────────────────────
+async function handleProductHunt(endpoint: string, searchParams: URLSearchParams, creds: IntegrationCredentials): Promise<Response> {
   const url = "https://api.producthunt.com/v2/api/graphql";
-  const headers = {
-    Authorization: `Bearer ${creds.api_key}`,
-    "Content-Type": "application/json",
-  };
+  const headers = { Authorization: `Bearer ${creds.api_key}`, "Content-Type": "application/json" };
 
   let query: string;
   switch (endpoint) {
     case "posts":
-      query =
-        "{ posts(first: 10) { edges { node { id name tagline votesCount } } } }";
+      // RANKING = today's featured posts by score (default PH order)
+      query = `{ posts(first: 20, order: RANKING) { edges { node { id name tagline votesCount commentsCount url createdAt thumbnail { url } topics { edges { node { name } } } } } } }`;
       break;
     case "topics":
-      query =
-        "{ topics(first: 20) { edges { node { id name followersCount } } } }";
+      query = `{ topics(first: 30) { edges { node { id name slug followersCount } } } }`;
       break;
     default:
-      query = searchParams.get("query") ?? "{ posts(first: 5) { edges { node { id name } } } }";
+      query = searchParams.get("query") ?? `{ posts(first: 10, order: RANKING) { edges { node { id name tagline votesCount } } } }`;
   }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ query }),
-  });
+  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ query }) });
   const data = await safeJson(res);
   return json(data, res.status);
 }
 
-// ─── Main proxy dispatcher ───────────────────────────────────────────────────
+// ─── Test connection ──────────────────────────────────────────────────────────
+async function handleTestConnection(name: string, creds: IntegrationCredentials): Promise<{ ok: boolean; message: string }> {
+  try {
+    switch (name) {
+      case "ahrefs": {
+        // domain-rating costs 2 units, requires target+date, NO select param
+        const today = new Date().toISOString().slice(0, 10);
+        const res = await fetch(
+          `https://api.ahrefs.com/v3/site-explorer/domain-rating?target=ahrefs.com&date=${today}`,
+          { headers: { Authorization: `Bearer ${creds.api_key}` } }
+        );
+        if (res.status === 401 || res.status === 403) return { ok: false, message: "Invalid API key" };
+        if (res.status === 429) return { ok: false, message: "Rate limited — try again shortly" };
+        if (!res.ok) {
+          const d = await safeJson(res);
+          return { ok: false, message: d?.error ?? `API error ${res.status}` };
+        }
+        return { ok: true, message: "API key verified" };
+      }
+      case "linkedin": {
+        const res = await fetch("https://api.linkedin.com/v2/me", {
+          headers: { Authorization: `Bearer ${creds.access_token}` },
+        });
+        if (!res.ok) return { ok: false, message: "Invalid access token" };
+        return { ok: true, message: "Access token verified" };
+      }
+      case "outlook": {
+        const res = await fetch("https://graph.microsoft.com/v1.0/me", {
+          headers: { Authorization: `Bearer ${creds.access_token}` },
+        });
+        if (!res.ok) return { ok: false, message: "Invalid access token" };
+        return { ok: true, message: "Access token verified" };
+      }
+      case "ga4": {
+        const res = await fetch(
+          `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${encodeURIComponent(creds.access_token ?? "")}`
+        );
+        if (!res.ok) return { ok: false, message: "Invalid or expired access token" };
+        return { ok: true, message: "Access token verified" };
+      }
+      case "gsc": {
+        const res = await fetch("https://searchconsole.googleapis.com/webmasters/v3/sites", {
+          headers: { Authorization: `Bearer ${creds.access_token}` },
+        });
+        if (!res.ok) return { ok: false, message: "Invalid access token" };
+        return { ok: true, message: "Access token verified" };
+      }
+      case "youtube": {
+        if (creds.access_token) {
+          const res = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true`, {
+            headers: { Authorization: `Bearer ${creds.access_token}` },
+          });
+          if (!res.ok) return { ok: false, message: "Invalid access token" };
+          return { ok: true, message: "Access token verified" };
+        }
+        // API key test via mostPopular videos (public endpoint, no OAuth needed)
+        const res = await fetch(
+          `https://www.googleapis.com/youtube/v3/videos?part=snippet&chart=mostPopular&maxResults=1&key=${encodeURIComponent(creds.api_key ?? "")}`
+        );
+        if (!res.ok) {
+          const d = await safeJson(res);
+          return { ok: false, message: d?.error?.message ?? `API error ${res.status}` };
+        }
+        return { ok: true, message: "API key verified" };
+      }
+      case "producthunt": {
+        const res = await fetch("https://api.producthunt.com/v2/api/graphql", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${creds.api_key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ query: "{ viewer { id } }" }),
+        });
+        if (!res.ok) return { ok: false, message: "Invalid API key" };
+        const d = await safeJson(res);
+        if (d.errors?.some((e: any) => /auth|unauthorized/i.test(e.message ?? ""))) {
+          return { ok: false, message: "Invalid API key" };
+        }
+        return { ok: true, message: "API key verified" };
+      }
+      case "wordpress": {
+        const siteUrl = (creds.extra_config?.site_url ?? "").replace(/\/$/, "");
+        if (!siteUrl) return { ok: false, message: "Site URL is required" };
+        const basicAuth = btoa(`${creds.api_key ?? ""}:${creds.api_secret ?? ""}`);
+        const res = await fetch(`${siteUrl}/wp-json/wp/v2/users/me`, {
+          headers: { Authorization: `Basic ${basicAuth}` },
+        });
+        if (!res.ok) return { ok: false, message: `Auth failed (${res.status})` };
+        return { ok: true, message: "Credentials verified" };
+      }
+      default:
+        return { ok: false, message: "Unknown integration" };
+    }
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Connection failed" };
+  }
+}
 
+// ─── Main dispatcher ──────────────────────────────────────────────────────────
 export async function handleIntegrationProxy(
   req: Request,
   name: string,
@@ -501,14 +633,21 @@ export async function handleIntegrationProxy(
 ): Promise<Response> {
   const endpoint = searchParams.get("endpoint") ?? "";
 
-  // Guard: surface missing credentials as 401 instead of crashing
-  const needsApiKey = ["ahrefs", "youtube", "producthunt", "wordpress"];
-  const needsToken = ["ga4", "gsc", "linkedin", "outlook"];
-  if (needsApiKey.includes(name) && !creds.api_key) {
-    return json({ error: `${name} API key is not configured. Add it in Settings.` }, 401);
+  // Guard missing credentials
+  if (["ahrefs", "youtube", "producthunt"].includes(name) && !creds.api_key && !creds.access_token) {
+    return json({ error: `${name} credentials not configured. Add them in Settings.` }, 401);
   }
-  if (needsToken.includes(name) && !creds.access_token) {
-    return json({ error: `${name} access token is not configured. Add it in Settings.` }, 401);
+  if (["ga4", "gsc", "linkedin", "outlook"].includes(name) && !creds.access_token) {
+    return json({ error: `${name} access token not configured. Add it in Settings.` }, 401);
+  }
+  if (name === "wordpress" && !creds.api_key) {
+    return json({ error: "WordPress username not configured. Add credentials in Settings." }, 401);
+  }
+
+  // Test connection
+  if (endpoint === "test") {
+    const result = await handleTestConnection(name, creds);
+    return json(result, result.ok ? 200 : 401);
   }
 
   // Build forwarded query string — exclude our own meta params
@@ -522,92 +661,14 @@ export async function handleIntegrationProxy(
   const params = forwardedParts.join("&");
 
   switch (name) {
-    case "ahrefs":
-      return handleAhrefs(endpoint, params, creds);
-    case "ga4":
-      return handleGA4(req, endpoint, params, creds);
-    case "gsc":
-      return handleGSC(req, endpoint, params, creds);
-    case "linkedin":
-      return handleLinkedIn(endpoint, params, creds);
-    case "outlook":
-      return handleOutlook(req, endpoint, params, creds);
-    case "wordpress":
-      return handleWordPress(req, endpoint, params, creds);
-    case "youtube":
-      return handleYouTube(endpoint, params, creds, searchParams);
-    case "producthunt":
-      return handleProductHunt(endpoint, searchParams, creds);
-    default:
-      return json({ error: `Unknown integration: ${name}` }, 400);
+    case "ahrefs":      return handleAhrefs(endpoint, params, creds);
+    case "ga4":         return handleGA4(req, endpoint, params, creds);
+    case "gsc":         return handleGSC(req, endpoint, params, creds);
+    case "linkedin":    return handleLinkedIn(endpoint, params, creds);
+    case "outlook":     return handleOutlook(req, endpoint, params, creds);
+    case "wordpress":   return handleWordPress(req, endpoint, params, creds);
+    case "youtube":     return handleYouTube(endpoint, params, creds);
+    case "producthunt": return handleProductHunt(endpoint, searchParams, creds);
+    default:            return json({ error: `Unknown integration: ${name}` }, 400);
   }
-}
-
-// ─── HTTP route handler ──────────────────────────────────────────────────────
-
-export async function handleIntegrationsRoute(req: Request): Promise<Response> {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS });
-  }
-
-  const url = new URL(req.url);
-  const pathParts = url.pathname.replace(/^\/+/, "").split("/");
-  // Expect paths like: /api/integrations, /api/integrations/:name, /api/integrations/:name/proxy
-  const integrationName = pathParts[2] ?? null;
-  const action = pathParts[3] ?? null;
-
-  // GET /api/integrations — list all
-  if (req.method === "GET" && !integrationName) {
-    const integrations = await listIntegrations();
-    return json({ integrations });
-  }
-
-  // GET /api/integrations/:name — get single (masked)
-  if (req.method === "GET" && integrationName && action === null) {
-    const creds = await getCredentials(integrationName);
-    if (!creds) {
-      return json({ error: "Integration not found" }, 404);
-    }
-    const masked: any = { name: integrationName, connected: true };
-    if (creds.api_key) {
-      masked.api_key = creds.api_key.length > 4 ? creds.api_key.slice(0, 4) + "***" : "***";
-    }
-    if (creds.access_token) {
-      masked.access_token = "***";
-    }
-    masked.extra_config = creds.extra_config;
-    return json(masked);
-  }
-
-  // POST /api/integrations/:name — save/upsert
-  if (req.method === "POST" && integrationName && action === null) {
-    let body: any;
-    try {
-      body = await req.json();
-    } catch {
-      return json({ error: "Invalid JSON body" }, 400);
-    }
-    await saveIntegration(integrationName, body as IntegrationCredentials);
-    return json({ success: true, name: integrationName });
-  }
-
-  // DELETE /api/integrations/:name — remove
-  if (req.method === "DELETE" && integrationName && action === null) {
-    await removeIntegration(integrationName);
-    return json({ success: true });
-  }
-
-  // GET|POST /api/integrations/:name/proxy — proxy to external API
-  if (integrationName && action === "proxy") {
-    const creds = await getCredentials(integrationName);
-    if (!creds) {
-      return json(
-        { error: `Integration '${integrationName}' is not configured` },
-        404
-      );
-    }
-    return handleIntegrationProxy(req, integrationName, url.searchParams, creds);
-  }
-
-  return json({ error: "Not found" }, 404);
 }
