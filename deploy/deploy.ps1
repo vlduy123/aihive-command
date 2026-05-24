@@ -3,7 +3,7 @@
 # Usage: $env:VALTOWN_TOKEN="your_token"; .\deploy\deploy.ps1
 
 param(
-  [string]$Token = $env:VALTOWN_TOKEN,
+  [string]$Token = $(if ($env:valtown) { $env:valtown } else { $env:VALTOWN_TOKEN }),
   [string]$ProjectId = $env:VALTOWN_PROJECT_ID
 )
 

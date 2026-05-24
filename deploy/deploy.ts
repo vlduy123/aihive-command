@@ -15,9 +15,10 @@ const BASE_URL = "https://api.val.town/v1";
 // Config
 // ---------------------------------------------------------------------------
 
-const token = Deno.env.get("VALTOWN_TOKEN");
+// val.town injects the current user's token as "valtown"; VALTOWN_TOKEN is the local override
+const token = Deno.env.get("valtown") ?? Deno.env.get("VALTOWN_TOKEN");
 if (!token) {
-  console.error("ERROR: VALTOWN_TOKEN env var required");
+  console.error("ERROR: set VALTOWN_TOKEN (local) or run inside val.town where 'valtown' is injected");
   Deno.exit(1);
 }
 
