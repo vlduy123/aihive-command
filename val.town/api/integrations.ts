@@ -21,6 +21,11 @@ function json(data: any, status = 200): Response {
   });
 }
 
+async function safeJson(res: Response): Promise<any> {
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return { error: text.slice(0, 500) || `HTTP ${res.status}` }; }
+}
+
 export async function getCredentials(
   name: string
 ): Promise<IntegrationCredentials | null> {
@@ -201,7 +206,7 @@ async function handleAhrefs(
   }
 
   const res = await fetch(url, { headers });
-  const data = await res.json();
+  const data = await safeJson(res);
   return json(data, res.status);
 }
 
@@ -241,7 +246,7 @@ async function handleGA4(
   }
 
   const res = await fetch(url, { method, headers, body });
-  const data = await res.json();
+  const data = await safeJson(res);
   return json(data, res.status);
 }
 
@@ -277,7 +282,7 @@ async function handleGSC(
   }
 
   const res = await fetch(url, { method, headers, body });
-  const data = await res.json();
+  const data = await safeJson(res);
   return json(data, res.status);
 }
 
@@ -313,7 +318,7 @@ async function handleLinkedIn(
   }
 
   const res = await fetch(url, { headers });
-  const data = await res.json();
+  const data = await safeJson(res);
   return json(data, res.status);
 }
 
@@ -354,7 +359,7 @@ async function handleOutlook(
   }
 
   const res = await fetch(url, { method, headers, body });
-  const data = await res.json();
+  const data = await safeJson(res);
   return json(data, res.status);
 }
 
@@ -399,7 +404,7 @@ async function handleWordPress(
   }
 
   const res = await fetch(url, { method, headers, body });
-  const data = await res.json();
+  const data = await safeJson(res);
   return json(data, res.status);
 }
 
@@ -448,7 +453,7 @@ async function handleYouTube(
   }
 
   const res = await fetch(url, { headers });
-  const data = await res.json();
+  const data = await safeJson(res);
   return json(data, res.status);
 }
 
@@ -482,7 +487,7 @@ async function handleProductHunt(
     headers,
     body: JSON.stringify({ query }),
   });
-  const data = await res.json();
+  const data = await safeJson(res);
   return json(data, res.status);
 }
 
@@ -495,6 +500,16 @@ export async function handleIntegrationProxy(
   creds: IntegrationCredentials
 ): Promise<Response> {
   const endpoint = searchParams.get("endpoint") ?? "";
+
+  // Guard: surface missing credentials as 401 instead of crashing
+  const needsApiKey = ["ahrefs", "youtube", "producthunt", "wordpress"];
+  const needsToken = ["ga4", "gsc", "linkedin", "outlook"];
+  if (needsApiKey.includes(name) && !creds.api_key) {
+    return json({ error: `${name} API key is not configured. Add it in Settings.` }, 401);
+  }
+  if (needsToken.includes(name) && !creds.access_token) {
+    return json({ error: `${name} access token is not configured. Add it in Settings.` }, 401);
+  }
 
   // Build forwarded query string — exclude our own meta params
   const excluded = new Set(["endpoint", "integration"]);
