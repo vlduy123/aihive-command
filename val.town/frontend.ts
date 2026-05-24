@@ -1098,10 +1098,12 @@ export function getFrontendHTML(): string {
           });
           if (!res.ok) throw new Error('Failed');
           const data = await res.json();
+          const integ = data.integration || data;
+          const updated = { ...integ, connected: !!(integ.api_key || integ.access_token) };
           setIntegrations(prev => {
             const exists = prev.find(i => i.name === name);
-            if (exists) return prev.map(i => i.name === name ? { ...i, ...data } : i);
-            return [...prev, data];
+            if (exists) return prev.map(i => i.name === name ? updated : i);
+            return [...prev, updated];
           });
           showToast(\`\${INTEGRATION_META[name].label} saved!\`, 'success');
         } catch (e) {

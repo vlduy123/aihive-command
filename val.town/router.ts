@@ -39,7 +39,15 @@ export async function handleRequest(req: Request, url: URL): Promise<Response> {
     // GET /api/integrations — list all integrations
     if (pathname === "/api/integrations" && method === "GET") {
       const result = await sqlite.execute("SELECT * FROM integrations ORDER BY name ASC");
-      const integrations = result.rows.map((row) => rowToObject(result.columns, row));
+      const integrations = result.rows.map((row) => {
+        const obj = rowToObject(result.columns, row);
+        return {
+          ...obj,
+          connected: !!(obj.api_key || obj.access_token),
+          api_key: obj.api_key ? String(obj.api_key).slice(0, 4) + "***" : undefined,
+          access_token: obj.access_token ? "***" : undefined,
+        };
+      });
       return json(integrations);
     }
 
