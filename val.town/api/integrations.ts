@@ -263,6 +263,7 @@ async function handleGSC(
   let body: string | undefined;
 
   switch (endpoint) {
+    case "search-analytics":
     case "searchanalytics":
       url = `${base}/${siteUrl}/searchAnalytics/query`;
       method = "POST";
@@ -333,6 +334,7 @@ async function handleOutlook(
   let body: string | undefined;
 
   switch (endpoint) {
+    case "inbox":
     case "messages":
       url = `${base}/messages?$top=20&$orderby=receivedDateTime desc&${params}`;
       break;

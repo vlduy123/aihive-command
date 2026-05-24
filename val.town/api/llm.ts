@@ -106,6 +106,36 @@ export async function callLLM(
 
 // ─── Anthropic ────────────────────────────────────────────────────────────────
 
+function toAnthropicMessages(messages: ChatMessage[]): any[] {
+  const result: any[] = [];
+  for (const m of messages as any[]) {
+    if (m.role === "tool") {
+      const block = { type: "tool_result", tool_use_id: m.tool_call_id, content: m.content };
+      const prev = result[result.length - 1];
+      if (prev && prev.role === "user" && Array.isArray(prev.content)) {
+        prev.content.push(block);
+      } else {
+        result.push({ role: "user", content: [block] });
+      }
+    } else if (m.role === "assistant" && m.tool_calls?.length) {
+      const content: any[] = [];
+      if (m.content) content.push({ type: "text", text: m.content });
+      for (const tc of m.tool_calls) {
+        let input: any = {};
+        try {
+          input = typeof tc.function.arguments === "string"
+            ? JSON.parse(tc.function.arguments) : tc.function.arguments ?? {};
+        } catch { input = {}; }
+        content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
+      }
+      result.push({ role: "assistant", content });
+    } else {
+      result.push({ role: m.role, content: m.content });
+    }
+  }
+  return result;
+}
+
 async function callAnthropic(
   config: LLMConfig,
   messages: ChatMessage[],
@@ -116,10 +146,7 @@ async function callAnthropic(
   const body: Record<string, any> = {
     model: config.model ?? "claude-sonnet-4-6",
     max_tokens: maxTokens,
-    messages: messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    })),
+    messages: toAnthropicMessages(messages),
   };
 
   if (systemPrompt) {

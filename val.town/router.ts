@@ -71,7 +71,7 @@ export async function handleRequest(req: Request, url: URL): Promise<Response> {
             body.api_secret ?? null,
             body.access_token ?? null,
             body.refresh_token ?? null,
-            body.extra_config ?? null,
+            body.extra_config != null ? JSON.stringify(body.extra_config) : null,
             now,
             name,
           ]
@@ -89,7 +89,7 @@ export async function handleRequest(req: Request, url: URL): Promise<Response> {
             body.api_secret ?? null,
             body.access_token ?? null,
             body.refresh_token ?? null,
-            body.extra_config ?? null,
+            body.extra_config != null ? JSON.stringify(body.extra_config) : null,
             now,
             now,
           ]

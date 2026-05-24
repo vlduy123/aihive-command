@@ -278,7 +278,6 @@ async function executeTool(
           description,
           system_prompt,
           tools,
-          status: "idle",
         });
         return JSON.stringify({ success: true, agent });
       } catch (err: any) {
@@ -405,15 +404,19 @@ export async function handleChat(req: Request): Promise<Response> {
 
   // Determine tools — use agent's tools list if specified, else full toolset
   let tools = buildTools();
-  if (agent?.tools && agent.tools.length > 0) {
-    tools = tools.filter((t) => agent.tools!.includes(t.function.name));
+  if (agent?.tools) {
+    let agentToolNames: string[] = [];
+    try { agentToolNames = JSON.parse(agent.tools); } catch { agentToolNames = []; }
+    if (agentToolNames.length > 0) {
+      tools = tools.filter((t) => agentToolNames.includes(t.function.name));
+    }
   }
 
   // First LLM call
   let llmResult = await callLLM(llmConfig, conversationHistory, {
     systemPrompt,
     tools,
-    maxTokens: llmConfig.max_tokens ?? 4096,
+    maxTokens: 4096,
   });
 
   const allToolCalls: any[] = [];
@@ -461,7 +464,7 @@ export async function handleChat(req: Request): Promise<Response> {
     llmResult = await callLLM(llmConfig, conversationHistory, {
       systemPrompt,
       tools,
-      maxTokens: llmConfig.max_tokens ?? 4096,
+      maxTokens: 4096,
     });
   }
 

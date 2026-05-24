@@ -497,81 +497,53 @@ export function getFrontendHTML(): string {
 
 
     function FunnelSection({integrations}){
-      const STEPS=[
-        {n:'Impressions',v:45820,p:100,c:'#4285f4',s:'Search Console'},
-        {n:'Sessions',v:12543,p:27.4,c:'#6366f1',s:'GA4 all channels'},
-        {n:'Engaged',v:4821,p:10.5,c:'#8b5cf6',s:'GA4 >10s / 2+ pages'},
-        {n:'Sign-ups',v:342,p:0.7,c:'#10b981',s:'GA4 sign_up event'},
-      ];
-      const CHNLS=[
-        {n:'Organic Search',s:5643,u:156,p:45,c:'#4285f4'},
-        {n:'Direct',s:3201,u:89,p:26,c:'#34d399'},
-        {n:'Social',s:2150,u:67,p:17,c:'#f59e0b'},
-        {n:'Referral',s:980,u:21,p:8,c:'#8b5cf6'},
-        {n:'Email',s:569,u:9,p:5,c:'#ef4444'},
-      ];
       const ga4=integrations.find(i=>i.name==='ga4'&&i.connected);
       const [loading,setLoading]=useState(false);
-      const [synced,setSynced]=useState(false);
-      const sync=async()=>{
-        if(!ga4)return; setLoading(true);
+      const [result,setResult]=useState(null);
+      const [err,setErr]=useState(null);
+      const SC=['#4285f4','#6366f1','#8b5cf6','#10b981'];
+      const load=async()=>{
+        if(!ga4)return;setLoading(true);setErr(null);
         try{
-          await fetch('/api/integrations/ga4/proxy?endpoint=funnel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-            funnel:{steps:[
-              {name:'Session Start',filterExpression:{funnelEventFilter:{eventName:'session_start'}}},
-              {name:'Sign Up',filterExpression:{funnelEventFilter:{eventName:'sign_up'}}},
-            ]},
-            funnelBreakdown:{breakdownDimension:{dimensionName:'firstUserChannelGrouping'}},
-            dateRanges:[{startDate:'30daysAgo',endDate:'today'}]
-          })});setSynced(true);
-        }catch(e){}finally{setLoading(false);}
+          const r=await fetch('/api/integrations/ga4/proxy?endpoint=funnel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({funnel:{steps:[{name:'Session Start',filterExpression:{funnelEventFilter:{eventName:'session_start'}}},{name:'Sign Up',filterExpression:{funnelEventFilter:{eventName:'sign_up'}}}]},funnelBreakdown:{breakdownDimension:{dimensionName:'firstUserChannelGrouping'}},dateRanges:[{startDate:'30daysAgo',endDate:'today'}]})});
+          const d=await r.json();
+          if(!r.ok)throw new Error(d.error||d.message||'GA4 '+r.status);
+          setResult(d);
+        }catch(e){setErr(e.message);}finally{setLoading(false);}
       };
-      const S={bg:'#0a0a0f',card:{background:'#13131a',border:'1px solid #1e1e2e',borderRadius:14,padding:24,marginBottom:24}};
-      return React.createElement('div',{style:S.card},
+      useEffect(()=>{if(ga4)load();},[]);
+      const bg='#0a0a0f';
+      const card={background:'#13131a',border:'1px solid #1e1e2e',borderRadius:14,padding:24,marginBottom:24};
+      const rows=result?.funnelTable?.rows||[];
+      const base=parseInt(rows[0]?.metricValues?.[0]?.value||'1',10);
+      return React.createElement('div',{style:card},
         React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}},
           React.createElement('div',null,
             React.createElement('div',{style:{fontWeight:700,fontSize:16,color:'#e2e8f0',display:'flex',alignItems:'center',gap:8}},React.createElement(Activity,{size:17,color:'#6366f1'}),'Acquisition Funnel'),
             React.createElement('div',{style:{fontSize:12,color:'#64748b',marginTop:3}},'User signup sources · last 30 days')
           ),
-          React.createElement('div',{style:{display:'flex',alignItems:'center',gap:8}},
-            !ga4&&React.createElement(Badge,{label:'Demo',variant:'warning'}),
-            synced&&React.createElement(Badge,{label:'Synced',variant:'success'}),
-            ga4&&React.createElement(Btn,{onClick:sync,variant:'ghost',size:'sm',disabled:loading},loading?React.createElement(Spinner,{size:12}):React.createElement(RefreshCw,{size:12}),'Sync GA4')
-          )
+          ga4&&React.createElement(Btn,{onClick:load,variant:'ghost',size:'sm',disabled:loading},loading?React.createElement(Spinner,{size:12}):React.createElement(RefreshCw,{size:12}))
         ),
-        React.createElement('div',{style:{display:'flex',alignItems:'center',gap:4,overflowX:'auto',paddingBottom:8,marginBottom:20}},
-          STEPS.map((st,i)=>React.createElement('div',{key:st.n,style:{display:'flex',alignItems:'center',flexShrink:0}},
-            React.createElement('div',{style:{minWidth:128,background:S.bg,border:'1px solid #1e1e2e',borderRadius:12,padding:'14px 16px',position:'relative',overflow:'hidden'}},
-              React.createElement('div',{style:{fontSize:20,fontWeight:800,color:st.c,lineHeight:1,marginBottom:3}},st.v.toLocaleString()),
-              React.createElement('div',{style:{fontSize:12,fontWeight:600,color:'#e2e8f0',marginBottom:2}},st.n),
-              React.createElement('div',{style:{fontSize:10,color:'#64748b',marginBottom:8}},st.s),
-              React.createElement('div',{style:{fontSize:11,fontWeight:700,color:i===0?'#64748b':st.p>5?'#10b981':st.p>1?'#f59e0b':'#ef4444'}},i===0?'100%':st.p.toFixed(1)+'%'),
-              React.createElement('div',{style:{position:'absolute',bottom:0,left:0,right:0,height:3,background:st.c+'30'}},React.createElement('div',{style:{height:'100%',width:st.p+'%',background:st.c}}))
-            ),
-            i<STEPS.length-1&&React.createElement('div',{style:{color:'#2a2a3e',fontSize:20,padding:'0 4px'}},'›')
-          ))
-        ),
-        React.createElement('div',{style:{fontFamily:'monospace',fontSize:11,color:'#4a5568',background:S.bg,border:'1px solid #1e1e2e',borderRadius:8,padding:'8px 12px',marginBottom:14,lineHeight:1.6}},
-          'GA4 v1alpha → POST /properties/{id}:runFunnelReport',React.createElement('br'),
-          'steps: session_start → sign_up | funnelBreakdown: firstUserChannelGrouping'
-        ),
-        React.createElement('div',{style:{fontWeight:600,fontSize:13,color:'#94a3b8',marginBottom:10}},'By Acquisition Channel'),
-        React.createElement('div',{style:{display:'flex',flexDirection:'column',gap:8}},
-          CHNLS.map(ch=>React.createElement('div',{key:ch.n},
-            React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}},
-              React.createElement('div',{style:{display:'flex',alignItems:'center',gap:8}},
-                React.createElement('div',{style:{width:8,height:8,borderRadius:'50%',background:ch.c}}),
-                React.createElement('span',{style:{fontSize:13,color:'#e2e8f0',fontWeight:500}},ch.n)
+        !ga4&&React.createElement('div',{style:{padding:'28px 0',color:'#64748b',fontSize:13,textAlign:'center'}},'Connect GA4 in Settings to view your acquisition funnel.'),
+        ga4&&loading&&!result&&React.createElement('div',{style:{padding:'28px 0',textAlign:'center'}},React.createElement(Spinner,{size:20})),
+        ga4&&err&&React.createElement('div',{style:{background:'#1a0a0a',border:'1px solid #7f1d1d',borderRadius:8,padding:'10px 14px',color:'#f87171',fontSize:12,fontFamily:'monospace',marginBottom:10}},err),
+        ga4&&result&&rows.length===0&&React.createElement('div',{style:{padding:'24px 0',color:'#64748b',fontSize:13,textAlign:'center'}},'No funnel data. Verify GA4 property ID and sign_up event tracking.'),
+        ga4&&rows.length>0&&React.createElement('div',{style:{display:'flex',alignItems:'center',gap:4,overflowX:'auto',paddingBottom:8}},
+          rows.map((row,i)=>{
+            const nm=row.dimensionValues?.[0]?.value||('Step '+(i+1));
+            const v=parseInt(row.metricValues?.[0]?.value||'0',10);
+            const pct=i===0?100:Math.round(v/base*1000)/10;
+            const c=SC[i%SC.length];
+            return React.createElement('div',{key:i,style:{display:'flex',alignItems:'center',flexShrink:0}},
+              React.createElement('div',{style:{minWidth:120,background:bg,border:'1px solid #1e1e2e',borderRadius:10,padding:'12px 14px',position:'relative',overflow:'hidden'}},
+                React.createElement('div',{style:{fontSize:19,fontWeight:800,color:c,lineHeight:1,marginBottom:2}},v.toLocaleString()),
+                React.createElement('div',{style:{fontSize:11,fontWeight:600,color:'#e2e8f0',marginBottom:6}},nm),
+                React.createElement('div',{style:{fontSize:11,fontWeight:700,color:i===0?'#64748b':pct>5?'#10b981':pct>1?'#f59e0b':'#ef4444'}},i===0?'100%':pct.toFixed(1)+'%'),
+                React.createElement('div',{style:{position:'absolute',bottom:0,left:0,right:0,height:3,background:c+'30'}},React.createElement('div',{style:{height:'100%',width:Math.min(pct,100)+'%',background:c}}))
               ),
-              React.createElement('div',{style:{display:'flex',gap:16,fontSize:12}},
-                React.createElement('span',{style:{color:'#64748b'}},ch.s.toLocaleString()+' sessions'),
-                React.createElement('span',{style:{color:'#10b981',fontWeight:600}},ch.u+' signups')
-              )
-            ),
-            React.createElement('div',{style:{height:6,background:'#1e1e2e',borderRadius:3,overflow:'hidden'}},
-              React.createElement('div',{style:{height:'100%',width:ch.p+'%',background:ch.c,borderRadius:3}})
-            )
-          ))
+              i<rows.length-1&&React.createElement('div',{style:{color:'#2a2a3e',fontSize:18,padding:'0 3px'}},'›')
+            );
+          })
         )
       );
     }
@@ -935,7 +907,7 @@ export function getFrontendHTML(): string {
             workspace: form.workspace,
             description: form.description,
             system_prompt: form.system_prompt,
-            tools: Array.isArray(form.tools) ? JSON.stringify(form.tools) : form.tools,
+            tools: form.tools,
             model: form.model,
           };
           const res = await fetch(url, {
@@ -1071,7 +1043,7 @@ export function getFrontendHTML(): string {
     function SettingsPage({ integrations, setIntegrations, llmConfig, setLlmConfig, showToast }) {
       const [llmForm, setLlmForm] = useState({
         provider: llmConfig?.provider || 'anthropic',
-        apiKey: llmConfig?.apiKey || '',
+        apiKey: llmConfig?.api_key || '',
         model: llmConfig?.model || 'claude-sonnet-4-6',
         endpoint: llmConfig?.endpoint || '',
       });
@@ -1097,7 +1069,7 @@ export function getFrontendHTML(): string {
         try {
           const res = await fetch('/api/llm/config', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(llmForm)
+            body: JSON.stringify({ provider: llmForm.provider, model: llmForm.model, api_key: llmForm.apiKey, endpoint: llmForm.endpoint })
           });
           if (!res.ok) throw new Error('Failed');
           const data = await res.json();
@@ -1113,9 +1085,16 @@ export function getFrontendHTML(): string {
       const saveIntegration = async (name) => {
         setIntSaving(s => ({ ...s, [name]: true }));
         try {
+          const f=intFields[name]||{};
+          const ex={};
+          if(f.propertyId)ex.property_id=f.propertyId;
+          if(f.siteUrl)ex.site_url=f.siteUrl;
+          if(f.authorId)ex.author_id=f.authorId;
+          const pl={api_key:f.apiKey||undefined,api_secret:f.apiSecret||undefined,access_token:f.accessToken||undefined};
+          if(Object.keys(ex).length)pl.extra_config=ex;
           const res = await fetch(\`/api/integrations/\${name}\`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(intFields[name])
+            body: JSON.stringify(pl)
           });
           if (!res.ok) throw new Error('Failed');
           const data = await res.json();

@@ -67,7 +67,11 @@ export async function createAgent(data: Partial<Agent>): Promise<Agent> {
   const workspace = data.workspace ?? "marketing";
   const description = data.description ?? null;
   const system_prompt = data.system_prompt ?? null;
-  const tools = data.tools ? JSON.stringify(data.tools) : "[]";
+  const tools = (() => {
+    if (!data.tools) return "[]";
+    if (typeof data.tools === "string") return data.tools;
+    return JSON.stringify(data.tools);
+  })();
   const model = (data as any).model ?? "claude-sonnet-4-6";
   const created_by = (data as any).created_by ?? "user";
 
@@ -99,7 +103,9 @@ export async function updateAgent(
   const workspace = data.workspace ?? existing.workspace;
   const description = "description" in data ? (data.description ?? null) : (existing.description ?? null);
   const system_prompt = "system_prompt" in data ? (data.system_prompt ?? null) : (existing.system_prompt ?? null);
-  const tools = "tools" in data ? JSON.stringify(data.tools ?? []) : (existing.tools ?? "[]");
+  const tools = "tools" in data
+    ? (typeof data.tools === "string" ? data.tools : JSON.stringify(data.tools ?? []))
+    : (existing.tools ?? "[]");
   const model = (data as any).model ?? (existing as any).model ?? "claude-sonnet-4-6";
   const enabled = "enabled" in data ? (data as any).enabled : (existing.enabled ?? 1);
 
