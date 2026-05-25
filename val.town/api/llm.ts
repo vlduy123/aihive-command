@@ -89,6 +89,8 @@ export async function callLLM(
       tools,
       maxTokens
     );
+  } else if (config.provider === "gemini") {
+    return callGemini(config, messages, systemPrompt, tools, maxTokens);
   } else if (config.provider === "custom") {
     const endpoint = config.endpoint?.replace(/\/+$/, "") ?? "";
     return callOpenAI(
@@ -269,4 +271,130 @@ async function callOpenAI(
       : undefined;
 
   return { content, tool_calls };
+}
+
+// ─── Gemini (native REST API) ─────────────────────────────────────────────────
+
+// Gemini rejects additionalProperties and other JSON Schema fields it doesn't know
+function stripUnsupported(schema: any): any {
+  if (!schema || typeof schema !== "object") return schema;
+  const { additionalProperties, $schema, ...rest } = schema;
+  if (rest.properties) {
+    rest.properties = Object.fromEntries(
+      Object.entries(rest.properties).map(([k, v]) => [k, stripUnsupported(v)])
+    );
+  }
+  if (rest.items) rest.items = stripUnsupported(rest.items);
+  return rest;
+}
+
+async function callGemini(
+  config: LLMConfig,
+  messages: ChatMessage[],
+  systemPrompt?: string,
+  tools?: any[],
+  maxTokens = 4096
+): Promise<{ content: string; tool_calls?: any[] }> {
+  const model = config.model ?? "gemini-3.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.api_key}`;
+
+  // Build tool_call_id -> function name map so functionResponse can use the name
+  const tcNameMap: Record<string, string> = {};
+  for (const m of messages as any[]) {
+    if (m.tool_calls) {
+      for (const tc of m.tool_calls) {
+        tcNameMap[tc.id] = tc.function.name;
+      }
+    }
+  }
+
+  const contents: any[] = [];
+  for (const m of messages as any[]) {
+    if (m.role === "system") continue;
+
+    if (m.role === "tool") {
+      const fnName = tcNameMap[m.tool_call_id] ?? m.tool_call_id ?? "tool";
+      // id must match the corresponding FunctionCall id (required in Gemini 3.x)
+      const part = { functionResponse: { id: (m as any).tool_call_id, name: fnName, response: { content: m.content } } };
+      const last = contents[contents.length - 1];
+      if (last?.role === "user") {
+        last.parts.push(part);
+      } else {
+        contents.push({ role: "user", parts: [part] });
+      }
+    } else if (m.role === "assistant" && m.tool_calls?.length) {
+      const parts: any[] = [];
+      if (m.content) parts.push({ text: m.content });
+      for (const tc of m.tool_calls) {
+        let args: any = {};
+        try { args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : (tc.function.arguments ?? {}); } catch { args = {}; }
+        const fcPart: any = { functionCall: { id: tc.id, name: tc.function.name, args } };
+        // Echo thoughtSignature exactly as received — required by Gemini 2.x thinking models
+        if (tc._gemini_thought_signature) fcPart.thoughtSignature = tc._gemini_thought_signature;
+        parts.push(fcPart);
+      }
+      contents.push({ role: "model", parts });
+    } else {
+      const role = m.role === "assistant" ? "model" : "user";
+      contents.push({ role, parts: [{ text: m.content }] });
+    }
+  }
+
+  const body: Record<string, any> = {
+    contents,
+    // temperature/top_p/top_k not recommended for Gemini 3.x — omit them
+    generationConfig: { maxOutputTokens: maxTokens },
+  };
+
+  if (systemPrompt) {
+    body.systemInstruction = { parts: [{ text: systemPrompt }] };
+  }
+
+  if (tools && tools.length > 0) {
+    body.tools = [{
+      functionDeclarations: tools.map(t => {
+        const fn = t.type === "function" ? t.function : t;
+        return { name: fn.name, description: fn.description ?? "", parameters: stripUnsupported(fn.parameters ?? { type: "object", properties: {} }) };
+      }),
+    }];
+    body.toolConfig = { functionCallingConfig: { mode: "AUTO" } };
+  }
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini API error ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+
+  let textContent = "";
+  const toolCalls: any[] = [];
+
+  for (const part of parts) {
+    if (part.text) textContent += part.text;
+    else if (part.functionCall) {
+      // Use the model's own id — must be echoed exactly in the functionResponse
+      const tc: any = {
+        id: part.functionCall.id ?? `gemini_${Date.now()}_${toolCalls.length}`,
+        type: "function",
+        function: {
+          name: part.functionCall.name,
+          arguments: JSON.stringify(part.functionCall.args ?? {}),
+        },
+      };
+      // Preserve thoughtSignature (Part-level field) — required by Gemini 2.x thinking models
+      const sig = part.thoughtSignature ?? part.thought_signature;
+      if (sig) tc._gemini_thought_signature = sig;
+      toolCalls.push(tc);
+    }
+  }
+
+  return { content: textContent, tool_calls: toolCalls.length > 0 ? toolCalls : undefined };
 }

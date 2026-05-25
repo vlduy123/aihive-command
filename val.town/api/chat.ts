@@ -82,16 +82,17 @@ async function saveConversation(
     [id]
   );
 
+  const ws = workspace ?? "general";
   if (existing.rows && existing.rows.length > 0) {
     await sqlite.execute(
       "UPDATE conversations SET messages = ?, agent_id = ?, workspace = ?, updated_at = ? WHERE id = ?",
-      [messagesJson, agentId ?? null, workspace ?? null, now, id]
+      [messagesJson, agentId ?? null, ws, now, id]
     );
   } else {
     await sqlite.execute(
       `INSERT INTO conversations (id, messages, agent_id, workspace, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, messagesJson, agentId ?? null, workspace ?? null, now, now]
+      [id, messagesJson, agentId ?? null, ws, now, now]
     );
   }
 }
@@ -402,15 +403,10 @@ export async function handleChat(req: Request): Promise<Response> {
       ? agent.system_prompt.trim()
       : DEFAULT_SYSTEM_PROMPT;
 
-  // Determine tools — use agent's tools list if specified, else full toolset
-  let tools = buildTools();
-  if (agent?.tools) {
-    let agentToolNames: string[] = [];
-    try { agentToolNames = JSON.parse(agent.tools); } catch { agentToolNames = []; }
-    if (agentToolNames.length > 0) {
-      tools = tools.filter((t) => agentToolNames.includes(t.function.name));
-    }
-  }
+  // Determine tools — always give all tools; agents narrow by integration name via get_integration_data
+  // Agent.tools stores integration names (e.g. ["ga4","gsc"]), not tool function names,
+  // so filtering by function name would always produce an empty list. Give all tools instead.
+  const tools = buildTools();
 
   // First LLM call
   let llmResult = await callLLM(llmConfig, conversationHistory, {

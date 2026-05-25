@@ -49,6 +49,37 @@ export async function getCredentials(name: string): Promise<IntegrationCredentia
   };
 }
 
+// GA4, GSC, and YouTube all use the same Google Cloud OAuth credentials.
+// If a service doesn't have its own access_token, fall back to the shared 'google' integration.
+async function withGoogleFallback(creds: IntegrationCredentials): Promise<IntegrationCredentials> {
+  const google = await getCredentials("google");
+  return {
+    ...creds,
+    access_token: creds.access_token || google?.access_token,
+    refresh_token: creds.refresh_token || google?.refresh_token,
+    api_key: creds.api_key || google?.api_key,
+    extra_config: { ...google?.extra_config, ...creds.extra_config },
+  };
+}
+
+// Use refresh_token to get a new access_token and persist it.
+async function refreshGoogleToken(): Promise<string | null> {
+  const google = await getCredentials("google");
+  if (!google?.refresh_token) return null;
+  const clientId = google.extra_config?.client_id ?? "";
+  const clientSecret = google.api_secret ?? "";
+  if (!clientId || !clientSecret) return null;
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ refresh_token: google.refresh_token, client_id: clientId, client_secret: clientSecret, grant_type: "refresh_token" }),
+  });
+  const data = await res.json();
+  if (!data.access_token) return null;
+  await sqlite.execute("UPDATE integrations SET access_token=?, updated_at=? WHERE name='google'", [data.access_token, new Date().toISOString()]);
+  return data.access_token;
+}
+
 // ─── Ahrefs ──────────────────────────────────────────────────────────────────
 // Docs: https://docs.ahrefs.com/en/api/reference/site-explorer
 // Auth: Authorization: Bearer {api_key}
@@ -561,12 +592,21 @@ async function handleTestConnection(name: string, creds: IntegrationCredentials)
         if (!res.ok) return { ok: false, message: "Invalid access token" };
         return { ok: true, message: "Access token verified" };
       }
+      case "google":
       case "ga4": {
         const res = await fetch(
           `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${encodeURIComponent(creds.access_token ?? "")}`
         );
         if (!res.ok) return { ok: false, message: "Invalid or expired access token" };
-        return { ok: true, message: "Access token verified" };
+        const info = await safeJson(res);
+        const scope = info.scope ?? "";
+        const coveredApis = [
+          scope.includes("analytics") ? "GA4" : "",
+          scope.includes("webmasters") || scope.includes("search-console") ? "GSC" : "",
+          scope.includes("youtube") ? "YouTube" : "",
+        ].filter(Boolean);
+        const scopeNote = coveredApis.length ? ` · covers: ${coveredApis.join(", ")}` : "";
+        return { ok: true, message: `Google OAuth token verified${scopeNote}` };
       }
       case "gsc": {
         const res = await fetch("https://searchconsole.googleapis.com/webmasters/v3/sites", {
@@ -633,11 +673,24 @@ export async function handleIntegrationProxy(
 ): Promise<Response> {
   const endpoint = searchParams.get("endpoint") ?? "";
 
+  // For Google services, merge shared Google OAuth credentials if own access_token is missing.
+  // One Google Cloud project → one client ID/secret → one access token covers GA4, GSC, and YouTube.
+  const GOOGLE_SERVICES = ["ga4", "gsc", "youtube"];
+  if (GOOGLE_SERVICES.includes(name)) {
+    creds = await withGoogleFallback(creds);
+  }
+
   // Guard missing credentials
-  if (["ahrefs", "youtube", "producthunt"].includes(name) && !creds.api_key && !creds.access_token) {
+  if (["ahrefs", "producthunt"].includes(name) && !creds.api_key && !creds.access_token) {
     return json({ error: `${name} credentials not configured. Add them in Settings.` }, 401);
   }
-  if (["ga4", "gsc", "linkedin", "outlook"].includes(name) && !creds.access_token) {
+  if (name === "youtube" && !creds.api_key && !creds.access_token) {
+    return json({ error: "YouTube requires an API Key or Google OAuth access token. Configure Google in Settings." }, 401);
+  }
+  if (["ga4", "gsc"].includes(name) && !creds.access_token) {
+    return json({ error: `${name} requires a Google OAuth access token. Configure Google in Settings.` }, 401);
+  }
+  if (["linkedin", "outlook"].includes(name) && !creds.access_token) {
     return json({ error: `${name} access token not configured. Add it in Settings.` }, 401);
   }
   if (name === "wordpress" && !creds.api_key) {
@@ -660,15 +713,31 @@ export async function handleIntegrationProxy(
   });
   const params = forwardedParts.join("&");
 
-  switch (name) {
-    case "ahrefs":      return handleAhrefs(endpoint, params, creds);
-    case "ga4":         return handleGA4(req, endpoint, params, creds);
-    case "gsc":         return handleGSC(req, endpoint, params, creds);
-    case "linkedin":    return handleLinkedIn(endpoint, params, creds);
-    case "outlook":     return handleOutlook(req, endpoint, params, creds);
-    case "wordpress":   return handleWordPress(req, endpoint, params, creds);
-    case "youtube":     return handleYouTube(endpoint, params, creds);
-    case "producthunt": return handleProductHunt(endpoint, searchParams, creds);
-    default:            return json({ error: `Unknown integration: ${name}` }, 400);
+  const dispatch = (c: IntegrationCredentials) => {
+    switch (name) {
+      case "ahrefs":      return handleAhrefs(endpoint, params, c);
+      case "ga4":         return handleGA4(req, endpoint, params, c);
+      case "gsc":         return handleGSC(req, endpoint, params, c);
+      case "google":      return json({ ok: true, message: "Google OAuth configured" });
+      case "linkedin":    return handleLinkedIn(endpoint, params, c);
+      case "outlook":     return handleOutlook(req, endpoint, params, c);
+      case "wordpress":   return handleWordPress(req, endpoint, params, c);
+      case "youtube":     return handleYouTube(endpoint, params, c);
+      case "producthunt": return handleProductHunt(endpoint, searchParams, c);
+      default:            return json({ error: `Unknown integration: ${name}` }, 400);
+    }
+  };
+
+  let resp = await dispatch(creds);
+
+  // Auto-refresh Google OAuth token on 401 and retry once
+  if (resp.status === 401 && GOOGLE_SERVICES.includes(name) && creds.refresh_token) {
+    const newToken = await refreshGoogleToken();
+    if (newToken) {
+      creds = { ...creds, access_token: newToken };
+      resp = await dispatch(creds);
+    }
   }
+
+  return resp;
 }

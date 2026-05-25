@@ -110,7 +110,7 @@ export function TrendBadge({ current, previous }) {
   }, (up ? '↑ +' : '↓ ') + Math.abs(pct).toFixed(1) + '%');
 }
 
-export function DataDisplay({data,loading,error,integrationName=''}){
+export function DataDisplay({data,loading,error,integrationName='',onFix=null}){
   const [sortCol,setSortCol]=useState(null);
   const [sortDir,setSortDir]=useState(1);
   const [page,setPage]=useState(0);
@@ -121,20 +121,49 @@ export function DataDisplay({data,loading,error,integrationName=''}){
   );
 
   if(error){
-    const hints={'select: column':'— check Ahrefs column names in API docs','401':'— refresh your access token in Settings','403':'— check API key permissions','not found':'— verify target domain or property ID'};
-    const hint=Object.entries(hints).find(([k])=>String(error).includes(k))?.[1]||'';
+    const hints={'select: column':'Check Ahrefs column names in the API docs','401':'Token expired — reconnect in Settings','403':'Check API key permissions in the provider dashboard','not found':'Verify your target domain or property ID','property_id':'Set your GA4 Property ID in Settings'};
+    const hint=Object.entries(hints).find(([k])=>String(error).toLowerCase().includes(k.toLowerCase()))?.[1]||'';
     return React.createElement('div',{style:{padding:14,borderRadius:8,background:'#1a0808',border:'1px solid #7f1d1d',color:'#ef4444',fontSize:13,lineHeight:1.6}},
-      React.createElement(AlertCircle,{size:14,style:{display:'inline',marginRight:6}}),String(error),
-      hint&&React.createElement('div',{style:{color:'#f87171',fontSize:11,marginTop:4,opacity:0.8}},hint)
+      React.createElement('div',{style:{display:'flex',alignItems:'flex-start',gap:8}},
+        React.createElement(AlertCircle,{size:14,style:{flexShrink:0,marginTop:2}}),
+        React.createElement('div',{style:{flex:1}},
+          String(error),
+          hint&&React.createElement('div',{style:{color:'#f87171',fontSize:11,marginTop:4,opacity:0.8}},hint)
+        ),
+        onFix&&React.createElement('button',{onClick:onFix,style:{flexShrink:0,fontSize:11,padding:'3px 10px',borderRadius:6,border:'1px solid rgba(239,68,68,0.4)',background:'rgba(239,68,68,0.1)',color:'#ef4444',cursor:'pointer',whiteSpace:'nowrap'}},'Fix →')
+      )
     );
   }
 
   if(!data)return null;
 
+  // Flatten any nested object values in a row so cells never show [object Object]
+  const flattenRow=(r)=>{
+    const out={};
+    for(const [k,v] of Object.entries(r)){
+      if(v===null||v===undefined){out[k]=v;}
+      else if(typeof v==='object'&&!Array.isArray(v)){
+        // one level deep: prefix with parent key
+        for(const [k2,v2] of Object.entries(v)){
+          if(typeof v2!=='object')out[k+'_'+k2]=v2;
+        }
+      } else if(Array.isArray(v)){
+        out[k]=v.join(', ');
+      } else {
+        out[k]=v;
+      }
+    }
+    return out;
+  };
+
   let rows=null,rk='';
-  for(const k of['keywords','backlinks','refdomains','organic_keywords','pages','rows','items','posts','messages','results','edges','value','events','categories']){
-    const a=Array.isArray(data[k])?data[k]:Array.isArray(data?.data?.[k])?data.data[k]:null;
-    if(a?.length&&typeof a[0]==='object'){rows=a;rk=k;break;}
+  // Handle top-level array (WordPress, normalized responses)
+  if(Array.isArray(data)&&data.length&&typeof data[0]==='object'){rows=data.map(flattenRow);rk='results';}
+  if(!rows){
+    for(const k of['keywords','backlinks','refdomains','organic_keywords','sitemap','pages','rows','items','posts','messages','results','edges','value','events','categories','data']){
+      const a=Array.isArray(data[k])?data[k]:Array.isArray(data?.data?.[k])?data.data[k]:null;
+      if(a?.length&&typeof a[0]==='object'){rows=a.map(flattenRow);rk=k;break;}
+    }
   }
   if(!rows&&data?.rows?.length&&data.dimensionHeaders){
     const dh=data.dimensionHeaders.map(h=>h.name),mh=(data.metricHeaders||[]).map(h=>h.name);

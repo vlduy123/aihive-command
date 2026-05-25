@@ -1,4 +1,4 @@
-﻿import { getAppJS2 } from "./frontend_js2.ts";
+import { getAppJS2 } from "./frontend_js2.ts";
 export function getAppJS(): string {
   return `
     import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
@@ -52,12 +52,13 @@ export function getAppJS(): string {
     };
 
 
-    const INTEGRATIONS = ['ahrefs', 'ga4', 'gsc', 'linkedin', 'outlook', 'wordpress', 'youtube', 'producthunt'];
+    const INTEGRATIONS = ['google', 'ahrefs', 'ga4', 'gsc', 'linkedin', 'outlook', 'wordpress', 'youtube', 'producthunt'];
 
     const INTEGRATION_META = {
+      google:      { icon: 'google',              label: 'Google OAuth',          category: 'marketing', color: '#4285f4' },
       ahrefs:      { icon: 'ahrefs',             label: 'Ahrefs',                category: 'marketing', color: '#f59e0b' },
       ga4:         { icon: 'googleanalytics',     label: 'Google Analytics 4',    category: 'marketing', color: '#e37400' },
-      gsc:         { icon: 'googlesearchconsole', label: 'Google Search Console', category: 'marketing', color: '#4285f4' },
+      gsc:         { icon: 'googlesearchconsole', label: 'Google Search Console', category: 'marketing', color: '#34a853' },
       linkedin:    { icon: 'linkedin',            label: 'LinkedIn',              category: 'sales',     color: '#0077b5' },
       outlook:     { icon: 'microsoftoutlook',    label: 'Outlook',               category: 'sales',     color: '#0078d4' },
       wordpress:   { icon: 'wordpress',           label: 'WordPress',             category: 'marketing', color: '#21759b' },
@@ -66,6 +67,7 @@ export function getAppJS(): string {
     };
 
     const INTEGRATION_ACTIONS = {
+      google:      [],
       ahrefs:      [
         { label: 'Site Overview', endpoint: 'site-explorer' },
         { label: 'Top Pages', endpoint: 'top-pages' },
@@ -97,18 +99,31 @@ export function getAppJS(): string {
       producthunt: [{ label: "Today's Posts", endpoint: 'posts' }, { label: 'Topics', endpoint: 'topics' }],
     };
 
+    // google = shared OAuth credentials for all Google APIs (GA4 + GSC + YouTube).
+    // GA4 and GSC inherit the google token automatically; per-service tokens override it.
     const INTEGRATION_FIELDS = {
+      google:      [
+        { key: 'clientId',   label: 'OAuth Client ID',     type: 'text',     hint: 'From Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (includes .apps.googleusercontent.com)' },
+        { key: 'apiSecret',  label: 'OAuth Client Secret', type: 'password', hint: 'From the same OAuth 2.0 credential — Client Secret field' },
+        { key: 'redirectUri',label: 'Redirect URI',        type: 'text',     hint: 'Copy this exactly to Google Cloud Console → Authorized Redirect URIs. Value: ' + window.location.origin + '/api/auth/google/callback' },
+      ],
       ahrefs:      [{ key: 'apiKey', label: 'API Key', type: 'password' }, { key: 'target', label: 'Target Domain', type: 'text' }],
-      ga4:         [{ key: 'accessToken', label: 'Access Token', type: 'password' }, { key: 'propertyId', label: 'Property ID', type: 'text' }],
-      gsc:         [{ key: 'accessToken', label: 'Access Token', type: 'password' }, { key: 'siteUrl', label: 'Site URL', type: 'text' }],
-      linkedin:    [{ key: 'accessToken', label: 'Access Token', type: 'password' }],
+      ga4:         [
+        { key: 'propertyId', label: 'GA4 Property ID', type: 'text', hint: 'Numbers only — e.g. 123456789. Token comes from Google OAuth above.' },
+      ],
+      gsc:         [
+        { key: 'siteUrl', label: 'Site URL', type: 'text', hint: 'e.g. https://example.com — token comes from Google OAuth above.' },
+      ],
+      linkedin:    [{ key: 'accessToken', label: 'Access Token', type: 'password', hint: 'LinkedIn v2 API — requires Marketing Developer Platform approval for most endpoints. Get a token via LinkedIn OAuth at developer.linkedin.com.' }],
       outlook:     [{ key: 'accessToken', label: 'Access Token', type: 'password' }],
       wordpress:   [{ key: 'siteUrl', label: 'Site URL', type: 'text' }, { key: 'apiKey', label: 'Username', type: 'text' }, { key: 'apiSecret', label: 'App Password', type: 'password' }],
-      youtube:     [{ key: 'apiKey', label: 'API Key', type: 'password' }],
+      youtube:     [
+        { key: 'apiKey', label: 'API Key (public data)', type: 'password', hint: 'For public endpoints only. Google OAuth token used automatically for your own channel.' },
+      ],
       producthunt: [{ key: 'apiKey', label: 'API Key', type: 'password' }],
     };
 
-    const ALL_TOOLS = ['ahrefs', 'ga4', 'gsc', 'linkedin', 'outlook', 'wordpress', 'youtube', 'producthunt'];
+    const ALL_TOOLS = ['google', 'ahrefs', 'ga4', 'gsc', 'linkedin', 'outlook', 'wordpress', 'youtube', 'producthunt'];
 
 
     function useToast() {
@@ -149,6 +164,101 @@ export function getAppJS(): string {
       );
     }
 
+
+    // Normalize each integration's API response into a flat structure DataDisplay can render.
+    // Fixes [object Object] cells by extracting nested objects into flat key-value rows.
+    function normalizeData(name, endpoint, data) {
+      if (!data || typeof data !== 'object') return data;
+      switch (name) {
+        case 'gsc': {
+          // GSC rows have a 'keys' array (query/page) that must be unpacked
+          if (Array.isArray(data.rows)) {
+            return data.rows.map(r => ({
+              [endpoint === 'pages' ? 'page' : 'query']: (r.keys || [])[0] || '',
+              clicks: r.clicks, impressions: r.impressions,
+              ctr: r.ctr != null ? (r.ctr * 100).toFixed(2) + '%' : '—',
+              position: r.position != null ? r.position.toFixed(1) : '—'
+            }));
+          }
+          if (Array.isArray(data.sitemap)) return data.sitemap.map(s => ({
+            path: s.path, type: s.type, lastSubmitted: s.lastSubmitted?.slice(0, 10),
+            isPending: s.isPending, warnings: s.warnings, errors: s.errors, contents: s.contents?.length
+          }));
+          return data;
+        }
+        case 'youtube': {
+          if (Array.isArray(data.items)) {
+            return data.items.map(item => ({
+              id: item.id?.videoId || item.id?.channelId || (typeof item.id === 'string' ? item.id : ''),
+              title: item.snippet?.title || '',
+              channel: item.snippet?.channelTitle || '',
+              published: item.snippet?.publishedAt?.slice(0, 10) || '',
+              views: item.statistics?.viewCount || '',
+              likes: item.statistics?.likeCount || '',
+              comments: item.statistics?.commentCount || '',
+              subscribers: item.statistics?.subscriberCount || ''
+            }));
+          }
+          return data;
+        }
+        case 'producthunt': {
+          const postEdges = data?.data?.posts?.edges || [];
+          const topicEdges = data?.data?.topics?.edges || [];
+          const edges = postEdges.length ? postEdges : topicEdges;
+          if (edges.length) {
+            return edges.map(e => {
+              const n = e.node || e;
+              return { id: n.id, name: n.name, tagline: n.tagline || '', slug: n.slug || '',
+                votes: n.votesCount || '', followers: n.followersCount || '',
+                comments: n.commentsCount || '', url: n.url || '' };
+            });
+          }
+          return data;
+        }
+        case 'wordpress': {
+          if (Array.isArray(data)) {
+            return data.map(p => ({
+              id: p.id, date: p.date?.slice(0, 10) || '', status: p.status || '',
+              title: p.title?.rendered || p.title || '',
+              link: p.link || '', type: p.type || '',
+              author: p.author, commentCount: p.comment_count
+            }));
+          }
+          return data;
+        }
+        case 'outlook': {
+          if (Array.isArray(data.value)) {
+            return data.value.map(m => ({
+              subject: m.subject || '(no subject)',
+              from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || '',
+              received: m.receivedDateTime?.slice(0, 16) || m.start?.dateTime?.slice(0, 16) || '',
+              isRead: m.isRead != null ? (m.isRead ? 'Yes' : 'No') : '',
+              location: m.location?.displayName || '',
+              end: m.end?.dateTime?.slice(0, 16) || ''
+            }));
+          }
+          return data;
+        }
+        case 'linkedin': {
+          if (Array.isArray(data.elements)) {
+            return data.elements.map(e => ({
+              id: e.id || '', urn: e.ugcPost || e.author || '',
+              created: e.created?.time ? new Date(e.created.time).toISOString().slice(0, 10) : '',
+              lifecycle: e.lifecycleState || ''
+            }));
+          }
+          // Profile response
+          if (data.localizedFirstName || data.firstName) {
+            const first = data.localizedFirstName || Object.values(data.firstName?.localized || {})[0] || '';
+            const last = data.localizedLastName || Object.values(data.lastName?.localized || {})[0] || '';
+            return { name: \`\${first} \${last}\`.trim(), id: data.id, headline: data.localizedHeadline || '' };
+          }
+          return data;
+        }
+        default:
+          return data;
+      }
+    }
 
     // Transform raw GA4 API response → flat row array
     function parseGA4Rows(data) {
@@ -391,9 +501,18 @@ export function getAppJS(): string {
         integrationName === 'ga4' && data && !error && !loading &&
           React.createElement(GA4RichDisplay, { data, endpoint: activeEndpoint }),
         (integrationName !== 'ga4' || !['kpi','traffic-over-time','user-acquisition'].includes(activeEndpoint)) &&
-          React.createElement(DataDisplay, { data, loading: loading && activeEndpoint !== null, error, integrationName }),
+          React.createElement(DataDisplay, {
+            data: normalizeData(integrationName, activeEndpoint, data),
+            loading: loading && activeEndpoint !== null, error, integrationName,
+            onFix: onGoToSettings
+          }),
         integrationName === 'ga4' && ['kpi','traffic-over-time','user-acquisition'].includes(activeEndpoint) && error &&
-          React.createElement('div',{style:{padding:14,borderRadius:8,background:'#1a0808',border:'1px solid #7f1d1d',color:'#ef4444',fontSize:13}},String(error))
+          React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+            React.createElement('div',{style:{padding:14,borderRadius:8,background:'#1a0808',border:'1px solid #7f1d1d',color:'#ef4444',fontSize:13}},String(error)),
+            React.createElement(Btn, { onClick: onGoToSettings, variant: 'ghost', size: 'sm' },
+              React.createElement(Settings, { size: 13 }), 'Fix in Settings'
+            )
+          )
       );
     }
 

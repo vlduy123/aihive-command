@@ -1,4 +1,4 @@
-﻿export function getAppJS2(): string {
+export function getAppJS2(): string {
   return `
     function AgentCard({ agent, onToggle, onEdit, onDelete, onRun }) {
       const [running, setRunning] = useState(false);
@@ -237,13 +237,24 @@
         }
       };
 
-      const handleRun = (agent) => {
-        setChatMessages(prev => [...prev, {
-          role: 'user',
-          content: \`Run agent: \${agent.name}. \${agent.description || 'Execute your primary task now.'}\`
-        }]);
+      const handleRun = async (agent) => {
+        const msg = \`Execute your primary task now. \${agent.description || ''}\`.trim();
+        const userMsg = { role: 'user', content: \`[\${agent.name}] \${msg}\`, id: Date.now() };
+        setChatMessages(prev => [...prev, userMsg]);
         setChatOpen(true);
-        showToast(\`Agent "\${agent.name}" activated in chat\`, 'success');
+        try {
+          const res = await fetch('/api/chat', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: msg, agent_id: agent.id, workspace: agent.workspace })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data?.error?.message || data?.error || \`HTTP \${res.status}\`);
+          setChatMessages(prev => [...prev, { role: 'assistant', content: data.response, id: Date.now() + 1 }]);
+          showToast(\`Agent "\${agent.name}" completed\`, 'success');
+        } catch (e) {
+          setChatMessages(prev => [...prev, { role: 'assistant', content: \`Error: \${e.message}\`, id: Date.now() + 1, error: true }]);
+          showToast(\`Agent "\${agent.name}" failed\`, 'error');
+        }
       };
 
       const openAiCreate = () => {
@@ -352,6 +363,8 @@
           if (ec.property_id) f[ig.name].propertyId = ec.property_id;
           if (ec.site_url) f[ig.name].siteUrl = ec.site_url;
           if (ec.author_id) f[ig.name].authorId = ec.author_id;
+          if (ec.client_id) f[ig.name].clientId = ec.client_id;
+          if (ec.redirect_uri) f[ig.name].redirectUri = ec.redirect_uri;
         });
         setIntFields(prev => {
           const u = { ...prev };
@@ -359,6 +372,18 @@
           return u;
         });
       }, [integrations]);
+
+      // Sync LLM form when config loads (useState only initializes once)
+      useEffect(() => {
+        if (llmConfig) {
+          setLlmForm({
+            provider: llmConfig.provider || 'anthropic',
+            apiKey: llmConfig.api_key || '',
+            model: llmConfig.model || 'claude-sonnet-4-6',
+            endpoint: llmConfig.endpoint || '',
+          });
+        }
+      }, [llmConfig]);
 
       const setLlmField = (k, v) => setLlmForm(f => ({ ...f, [k]: v }));
       const setIntField = (name, key, val) => setIntFields(f => ({ ...f, [name]: { ...f[name], [key]: val } }));
@@ -381,6 +406,16 @@
         }
       };
 
+      const disconnectIntegration = async (name) => {
+        if (!confirm(\`Disconnect \${INTEGRATION_META[name]?.label}? This clears all stored credentials.\`)) return;
+        await fetch(\`/api/integrations/\${name}\`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ access_token: null, api_key: null, api_secret: null })
+        });
+        setIntegrations(prev => prev.map(i => i.name === name ? { ...i, connected: false, access_token: undefined } : i));
+        showToast(\`\${INTEGRATION_META[name]?.label} disconnected\`, 'info');
+      };
+
       const saveIntegration = async (name) => {
         setIntSaving(s => ({ ...s, [name]: true }));
         try {
@@ -390,6 +425,8 @@
           if (f.siteUrl) ex.site_url = f.siteUrl;
           if (f.authorId) ex.author_id = f.authorId;
           if (f.target) ex.target = f.target;
+          if (f.clientId) ex.client_id = f.clientId;
+          if (f.redirectUri) ex.redirect_uri = f.redirectUri;
           const pl = {};
           if (f.apiKey) pl.api_key = f.apiKey;
           if (f.apiSecret) pl.api_secret = f.apiSecret;
@@ -418,7 +455,7 @@
         }
       };
 
-      const providerModels = { anthropic: 'claude-sonnet-4-6', openai: 'gpt-4o', custom: 'your-model' };
+      const providerModels = { anthropic: 'claude-sonnet-4-6', openai: 'gpt-4o', gemini: 'gemini-3.5-flash', custom: 'your-model' };
 
       return React.createElement('div', { style: { padding: 32, maxWidth: 860, margin: '0 auto' } },
         React.createElement('div', { style: { marginBottom: 28 } },
@@ -452,22 +489,52 @@
                   ),
                   React.createElement(Badge, { label: connected ? 'Connected' : 'Not Connected', variant: connected ? 'success' : 'muted' })
                 ),
-                React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 } },
-                  fields.map(f =>
-                    React.createElement(Input, {
-                      key: f.key, label: f.label, type: f.type,
-                      value: intFields[name]?.[f.key] || '',
-                      onChange: v => setIntField(name, f.key, v),
-                      placeholder: f.type === 'password' ? '••••••••••••' : \`Enter \${f.label.toLowerCase()}...\`
-                    })
+                name === 'google' && React.createElement('div', {
+                  style: { marginBottom: 14, padding: '10px 14px', borderRadius: 8, background: 'rgba(66,133,244,0.08)', border: '1px solid rgba(66,133,244,0.2)', fontSize: 12, color: '#94a3b8', lineHeight: 1.6 }
+                },
+                  '🔑 One Google Cloud project, one credential set — GA4, Search Console, and YouTube share it.',
+                  React.createElement('br'),
+                  'Step 1: paste Client ID + Secret below and click Save. Step 2: click "Connect with Google" to authorize.',
+                  React.createElement('br'),
+                  React.createElement('span', { style: { color: '#6366f1', userSelect: 'all', fontFamily: 'monospace', fontSize: 11 } },
+                    'Redirect URI to register in Google Cloud Console: ', window.location.origin + '/api/auth/google/callback'
                   )
                 ),
-                React.createElement(Btn, {
-                  onClick: () => saveIntegration(name), variant: 'primary', size: 'sm',
-                  disabled: intSaving[name]
-                },
-                  intSaving[name] ? React.createElement(Spinner, { size: 12, color: '#fff' }) : React.createElement(Save, { size: 13 }),
-                  intSaving[name] ? 'Saving...' : 'Save'
+                React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 } },
+                  fields.map(f =>
+                    React.createElement('div', { key: f.key },
+                      React.createElement(Input, {
+                        label: f.label, type: f.type,
+                        value: intFields[name]?.[f.key] || '',
+                        onChange: v => setIntField(name, f.key, v),
+                        placeholder: f.type === 'password' ? '••••••••••••' : \`Enter \${f.label.toLowerCase()}...\`
+                      }),
+                      f.hint && React.createElement('div', { style: { fontSize: 11, color: '#64748b', marginTop: 4, paddingLeft: 2 } }, f.hint)
+                    )
+                  )
+                ),
+                React.createElement('div', { style: { display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' } },
+                  React.createElement(Btn, {
+                    onClick: () => saveIntegration(name),
+                    variant: name === 'google' ? 'ghost' : 'primary',
+                    size: 'sm',
+                    disabled: intSaving[name]
+                  },
+                    intSaving[name] ? React.createElement(Spinner, { size: 12, color: '#fff' }) : React.createElement(Save, { size: 13 }),
+                    intSaving[name] ? 'Saving...' : 'Save'
+                  ),
+                  name === 'google' && React.createElement(Btn, {
+                    onClick: () => { window.location.href = '/api/auth/google'; },
+                    variant: 'primary', size: 'sm'
+                  },
+                    React.createElement(Key, { size: 13 }), 'Connect with Google'
+                  ),
+                  connected && React.createElement(Btn, {
+                    onClick: () => disconnectIntegration(name),
+                    variant: 'danger', size: 'sm'
+                  },
+                    React.createElement(Trash2, { size: 13 }), 'Disconnect'
+                  )
                 )
               );
             })
@@ -490,6 +557,7 @@
               options: [
                 { value: 'anthropic', label: 'Anthropic (Claude)' },
                 { value: 'openai', label: 'OpenAI' },
+                { value: 'gemini', label: 'Google Gemini' },
                 { value: 'custom', label: 'Custom' },
               ]
             }),
@@ -691,6 +759,16 @@
             if (intRes.status === 'fulfilled') setIntegrations(Array.isArray(intRes.value) ? intRes.value : []);
             if (agentRes.status === 'fulfilled') setAgents(Array.isArray(agentRes.value) ? agentRes.value : []);
             if (llmRes.status === 'fulfilled' && llmRes.value) setLlmConfig(llmRes.value);
+
+            // Handle OAuth callback redirects
+            const sp = new URLSearchParams(window.location.search);
+            if (sp.get('auth') === 'google_ok') {
+              showToast('Google connected! GA4, Search Console & YouTube are ready.', 'success');
+              window.history.replaceState({}, '', window.location.pathname);
+            } else if (sp.get('auth_error')) {
+              showToast('Google OAuth failed: ' + sp.get('auth_error'), 'error');
+              window.history.replaceState({}, '', window.location.pathname);
+            }
           } catch (e) {
             console.error('Init error:', e);
           } finally {
